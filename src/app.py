@@ -204,12 +204,20 @@ def create_expense(event, _ctx):
 
 
 def _update(group, eid, **attrs):
-    table.update_item(
-        Key={"groupId": group, "expenseId": eid},
-        UpdateExpression="SET " + ", ".join(f"#{k} = :{k}" for k in attrs),
-        ExpressionAttributeNames={f"#{k}": k for k in attrs},
-        ExpressionAttributeValues={f":{k}": v for k, v in attrs.items()},
-    )
+    """Update a bill only if it still exists (it may be deleted while Textract reads it;
+    a plain update_item would re-create a half item with no payer and break get_group)."""
+    try:
+        table.update_item(
+            Key={"groupId": group, "expenseId": eid},
+            UpdateExpression="SET " + ", ".join(f"#{k} = :{k}" for k in attrs),
+            ConditionExpression="attribute_exists(expenseId)",
+            ExpressionAttributeNames={f"#{k}": k for k in attrs},
+            ExpressionAttributeValues={f":{k}": v for k, v in attrs.items()},
+        )
+    except ClientError as e:
+        if e.response["Error"]["Code"] != "ConditionalCheckFailedException":
+            raise
+        print(f"skip update: {group}/{eid} was deleted")
 
 
 def process_bill(event, _ctx):
@@ -219,6 +227,10 @@ def process_bill(event, _ctx):
         key = unquote_plus(rec["s3"]["object"]["key"])
         _, group, eid = key.split("/")
         obj = {"S3Object": {"Bucket": bucket, "Name": key}}
+        if "Item" not in table.get_item(Key={"groupId": group, "expenseId": eid}, ProjectionExpression="expenseId"):
+            s3.delete_object(Bucket=bucket, Key=key)  # bill deleted before its photo arrived: drop the orphan
+            print(f"skip: {key} has no bill")
+            continue
         try:
             try:
                 data, engine = read_expense(textract.analyze_expense(Document=obj)), "textract"
@@ -245,6 +257,29 @@ def delete_expense(event, _ctx):
     table.delete_item(Key={"groupId": group, "expenseId": eid})
     s3.delete_object(Bucket=os.environ["BUCKET"], Key=f"bills/{group}/{eid}")  # no-op if it was a manual entry
     return resp(200, {"deleted": eid})
+
+
+def delete_group(event, _ctx):
+    """DELETE /groups/{group}: remove the group for everyone (bills, members, photos)."""
+    group = event["pathParameters"]["group"].lower()
+    if not GROUP_RE.match(group):
+        return resp(400, {"error": "Bad group code"})
+    ids, kw = [], {"KeyConditionExpression": Key("groupId").eq(group), "ProjectionExpression": "expenseId"}
+    while True:  # paginate: deleting must be complete
+        page = table.query(**kw)
+        ids += [i["expenseId"] for i in page["Items"]]
+        if "LastEvaluatedKey" not in page:
+            break
+        kw["ExclusiveStartKey"] = page["LastEvaluatedKey"]
+    with table.batch_writer() as batch:
+        for eid in ids:
+            batch.delete_item(Key={"groupId": group, "expenseId": eid})
+    # every photo under the group's prefix, including orphans whose bill is already gone
+    for page in s3.get_paginator("list_objects_v2").paginate(Bucket=os.environ["BUCKET"], Prefix=f"bills/{group}/"):
+        if page.get("Contents"):
+            s3.delete_objects(Bucket=os.environ["BUCKET"], Delete={
+                "Objects": [{"Key": o["Key"]} for o in page["Contents"]], "Quiet": True})
+    return resp(200, {"deleted": group, "items": len(ids)})
 
 
 def update_members(event, _ctx):

@@ -127,7 +127,12 @@
   .grow { display: flex; align-items: center; border-bottom: 1px solid var(--line); }
   .grow:last-child { border-bottom: 0; }
   .grow a { flex: 1; padding: .8rem 0; font-weight: 600; color: var(--ink); text-decoration: none; }
-  .grow .del { margin: 0 -.75rem 0 0; align-self: center; }
+  .mini { border: 0; background: none; color: var(--muted); font-weight: 600; min-height: 44px; padding: 0 .6rem; border-radius: 10px; cursor: pointer; }
+  .mini:hover { background: var(--soft); }
+  .mini.danger { color: var(--owe); }
+  .dangerZone { margin-top: .9rem; padding-top: .4rem; border-top: 1px dashed var(--line); }
+  .dangerZone .mini { margin-left: -.6rem; }
+  .hist .del { align-self: center; margin: 0 -.75rem 0 -.25rem; }
   .empty { color: var(--muted); font-size: .92rem; margin: 0; }
   .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
 </style>
@@ -182,6 +187,7 @@
         <input id="personInput" placeholder="Add a name" maxlength="30" autocomplete="off">
         <button class="btn">Add</button>
       </form>
+      <div class="dangerZone"><button type="button" class="mini danger" id="deleteGroup">Delete this group</button></div>
     </div>
 
     <div class="card" id="addBill">
@@ -271,6 +277,7 @@ let excluded = new Set(draft.excluded || []); // equal mode: people unticked
 let shares = draft.shares || {};              // unequal mode: name -> typed share
 function saveDraft() {
   const v = s => $(s).value;
+  if (group && !myGroups().includes(group)) return;  // group was just deleted/left: nothing to keep
   if (group) sessionStorage.setItem(draftKey, JSON.stringify({ mode, excluded: [...excluded], shares, amount: v('#amount'),
     note: v('#note'), person: v('#personInput'), payer: v('#payer'), manual: $('#manualBox').open }));
   else if (!$('#join').hidden) sessionStorage.setItem(draftKey, JSON.stringify({ groupCode: v('#groupInput') }));
@@ -449,7 +456,8 @@ async function showHistory() {
                   : '<div class="thumb none" aria-hidden="true">₹</div>'}
         <div class="info"><div class="title">${esc(title)}</div>
           <div class="muted">${esc(when)} · <a href="#${esc(e.group)}">${esc(e.group)}</a> · paid by ${esc(e.payer)}</div></div>
-        <span class="amt">${e.status === 'done' ? money(e.total) : '—'}</span></div>`;
+        <span class="amt">${e.status === 'done' ? money(e.total) : '—'}</span>
+        <button class="del" data-hdel="${esc(e.group)}/${esc(e.id)}" aria-label="Delete ${esc(title)}" title="Delete">×</button></div>`;
   }).join('') : '<p class="empty">No bills yet in your groups.</p>';
 }
 
@@ -460,8 +468,10 @@ function showJoin() {
   $('#groupInput').value = draft.groupCode || '';
   const gs = myGroups();
   $('#myGroups').hidden = !gs.length;
+  $('#nav').hidden = !gs.length;  // e.g. after deleting your last group
   $('#glist').innerHTML = gs.map(g => `<div class="grow"><a href="#${esc(g)}">${esc(g)}</a>
-      <button class="del" data-leave="${esc(g)}" aria-label="Remove ${esc(g)} from your list" title="Remove from list">×</button></div>`).join('');
+      <button class="mini" data-leave="${esc(g)}" aria-label="Leave ${esc(g)} (remove from this phone only)">Leave</button>
+      <button class="mini danger" data-gdel="${esc(g)}" aria-label="Delete ${esc(g)} for everyone">Delete</button></div>`).join('');
   $('#joinForm').onsubmit = e => {
     e.preventDefault();
     const code = $('#groupInput').value.trim().toLowerCase();
@@ -500,9 +510,14 @@ document.addEventListener('input', e => {
 });
 
 document.addEventListener('click', async e => {
-  const t = e.target.closest('[data-remove],[data-toggle],[data-settle],[data-del],[data-mode],[data-photo],[data-leave]');
+  const t = e.target.closest('[data-remove],[data-toggle],[data-settle],[data-del],[data-mode],[data-photo],[data-leave],[data-hdel],[data-gdel]');
   if (!t) return;
   const d = t.dataset;
+  if (d.hdel && confirm('Delete this bill and its photo? Balances in its group will update.')) {
+    try { await api(`/groups/${d.hdel.replace('/', '/expenses/')}`, null, 'DELETE'); await showHistory(); }
+    catch (err) { alert(err.message); }
+  }
+  if (d.gdel) deleteGroup(d.gdel);
   if (d.photo) { $('#viewerImg').src = d.photo; $('#viewer').showModal(); }
   if (d.mode) { mode = d.mode; splitKey = ''; render(); }
   if (d.toggle !== undefined) { excluded.has(d.toggle) ? excluded.delete(d.toggle) : excluded.add(d.toggle); t.setAttribute('aria-pressed', !excluded.has(d.toggle)); }
@@ -526,6 +541,20 @@ document.addEventListener('click', async e => {
     catch (err) { status(err.message, true); t.disabled = false; }
   }
 });
+// Deletes for everyone, so make them type the code (a mis-tap on OK can't do it).
+async function deleteGroup(g) {
+  const typed = prompt(`Delete "${g}" for everyone? All its bills, photos and people are removed. This can't be undone.\n\nType ${g} to confirm:`);
+  if (typed === null) return;
+  if (typed.trim().toLowerCase() !== g) return alert('The code didn’t match, so nothing was deleted.');
+  try { await api('/groups/' + g, null, 'DELETE'); }
+  catch (err) { return alert(err.message); }
+  saveGroups(myGroups().filter(x => x !== g));
+  if (localStorage.getItem('mw-last') === g) localStorage.removeItem('mw-last');
+  sessionStorage.removeItem('mw-draft-' + g);
+  if (g === group) location.hash = '/new'; else showJoin();
+}
+$('#deleteGroup').onclick = () => deleteGroup(group);
+
 $('#viewer').onclick = e => { if (e.target === $('#viewer')) $('#viewer').close(); };  // tap outside to close
 
 document.querySelectorAll('[data-bill]').forEach(i => { i.onchange = () => i.files[0] && scan(i.files[0], i); });

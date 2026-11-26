@@ -53,37 +53,6 @@ Resources:
             Action: s3:GetObject
             Resource: !Sub "${WebsiteBucket.Arn}/*"
 
-  # HTTPS for the website: S3 website endpoints are http-only and phones increasingly refuse http.
-  # API Gateway already serves HTTPS, so it proxies every non-API path to the S3 website.
-  # More specific routes (/expenses, /groups/...) still win over /{proxy+}.
-  # ponytail: CloudFront is the usual answer, but new accounts can't create it until AWS verifies them; switch once verified.
-  SiteIntegration:
-    Type: AWS::ApiGatewayV2::Integration
-    Properties:
-      ApiId: !Ref Api
-      IntegrationType: HTTP_PROXY
-      IntegrationMethod: GET
-      IntegrationUri: !Sub
-        - "http://${Host}/{proxy}"
-        - Host: !Select [2, !Split ["/", !GetAtt WebsiteBucket.WebsiteURL]]
-      PayloadFormatVersion: "1.0"
-  SiteRootIntegration:
-    Type: AWS::ApiGatewayV2::Integration
-    Properties:
-      ApiId: !Ref Api
-      IntegrationType: HTTP_PROXY
-      IntegrationMethod: GET
-      IntegrationUri: !Sub
-        - "http://${Host}/index.html"
-        - Host: !Select [2, !Split ["/", !GetAtt WebsiteBucket.WebsiteURL]]
-      PayloadFormatVersion: "1.0"
-  SiteRoute:
-    Type: AWS::ApiGatewayV2::Route
-    Properties: { ApiId: !Ref Api, RouteKey: "GET /{proxy+}", Target: !Sub "integrations/${SiteIntegration}" }
-  SiteRootRoute:
-    Type: AWS::ApiGatewayV2::Route
-    Properties: { ApiId: !Ref Api, RouteKey: "GET /", Target: !Sub "integrations/${SiteRootIntegration}" }
-
   Expenses:
     Type: AWS::DynamoDB::Table
     Properties:
@@ -96,9 +65,38 @@ Resources:
         - { AttributeName: expenseId, KeyType: RANGE }
 
   # ---------- API ----------
+  # The API also serves the website over HTTPS: S3 website endpoints are http-only and phones refuse http.
+  # GET / and GET /{proxy+} proxy to the S3 website; specific routes (/expenses, /groups/...) still win.
+  # These MUST live in DefinitionBody: SAM re-imports this definition on every route change, which wipes
+  # any route defined as a separate AWS::ApiGatewayV2::Route resource.
+  # ponytail: CloudFront is the usual answer, but new accounts can't create it until AWS verifies them; switch once verified.
   Api:
     Type: AWS::Serverless::HttpApi
     Properties:
+      DefinitionBody:
+        openapi: "3.0.1"
+        info: { title: moneywise, version: "1.0" }
+        paths:
+          /:
+            get:
+              x-amazon-apigateway-integration:
+                type: http_proxy
+                httpMethod: GET
+                uri: !Sub
+                  - "http://${Host}/index.html"
+                  - Host: !Select [2, !Split ["/", !GetAtt WebsiteBucket.WebsiteURL]]
+                payloadFormatVersion: "1.0"
+          /{proxy+}:
+            get:
+              parameters:
+                - { name: proxy, in: path, required: true, schema: { type: string } }
+              x-amazon-apigateway-integration:
+                type: http_proxy
+                httpMethod: GET
+                uri: !Sub
+                  - "http://${Host}/{proxy}"
+                  - Host: !Select [2, !Split ["/", !GetAtt WebsiteBucket.WebsiteURL]]
+                payloadFormatVersion: "1.0"
       CorsConfiguration:
         AllowOrigins: ["*"]
         AllowMethods: [GET, POST, DELETE]
@@ -126,7 +124,7 @@ Resources:
       Handler: app.process_bill
       Policies:
         - DynamoDBCrudPolicy: { TableName: !Ref Expenses }
-        - S3ReadPolicy: { BucketName: !Sub "${AWS::StackName}-bills-${AWS::AccountId}" }
+        - S3CrudPolicy: { BucketName: !Sub "${AWS::StackName}-bills-${AWS::AccountId}" }
         - Statement:
             - Effect: Allow
               Action: [textract:AnalyzeExpense, rekognition:DetectText]
@@ -164,6 +162,18 @@ Resources:
         Delete:
           Type: HttpApi
           Properties: { ApiId: !Ref Api, Path: "/groups/{group}/expenses/{id}", Method: DELETE }
+
+  DeleteGroupFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: app.delete_group
+      Policies:
+        - DynamoDBCrudPolicy: { TableName: !Ref Expenses }
+        - S3CrudPolicy: { BucketName: !Sub "${AWS::StackName}-bills-${AWS::AccountId}" }
+      Events:
+        Delete:
+          Type: HttpApi
+          Properties: { ApiId: !Ref Api, Path: "/groups/{group}", Method: DELETE }
 
   MembersFunction:
     Type: AWS::Serverless::Function
