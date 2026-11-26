@@ -60,6 +60,8 @@
   label.field > span { display: block; font-size: .85rem; font-weight: 600; margin-bottom: .3rem; }
   .chips { display: flex; flex-wrap: wrap; gap: .4rem; margin-bottom: .75rem; }
   .chip { border: 1px solid var(--line); background: var(--bg); border-radius: 999px; padding: .3rem .75rem; font-size: .9rem; cursor: pointer; }
+  .chip { position: relative; }
+  .chip::after { content: ""; position: absolute; inset: -6px -3px; }  /* 44px tap area, same look */
   .chip[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
   .chip .x { margin-left: .35rem; opacity: .6; }
   #status { min-height: 1.4em; margin: .75rem 0 0; font-size: .92rem; }
