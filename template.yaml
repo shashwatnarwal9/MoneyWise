@@ -29,7 +29,7 @@ Resources:
         Rules:
           - Id: expire-bill-photos
             Status: Enabled
-            ExpirationInDays: 90
+            ExpirationInDays: 365
 
   WebsiteBucket:
     Type: AWS::S3::Bucket
@@ -116,6 +116,7 @@ Resources:
       Handler: app.get_group
       Policies:
         - DynamoDBReadPolicy: { TableName: !Ref Expenses }
+        - S3ReadPolicy: { BucketName: !Sub "${AWS::StackName}-bills-${AWS::AccountId}" } # signs photo links
       Events:
         Get:
           Type: HttpApi
@@ -127,10 +128,22 @@ Resources:
       Handler: app.delete_expense
       Policies:
         - DynamoDBCrudPolicy: { TableName: !Ref Expenses }
+        - S3CrudPolicy: { BucketName: !Sub "${AWS::StackName}-bills-${AWS::AccountId}" } # deletes the photo too
       Events:
         Delete:
           Type: HttpApi
           Properties: { ApiId: !Ref Api, Path: "/groups/{group}/expenses/{id}", Method: DELETE }
+
+  MembersFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: app.update_members
+      Policies:
+        - DynamoDBCrudPolicy: { TableName: !Ref Expenses }
+      Events:
+        Post:
+          Type: HttpApi
+          Properties: { ApiId: !Ref Api, Path: "/groups/{group}/members", Method: POST }
 
 Outputs:
   WebsiteUrl:

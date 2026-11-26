@@ -1,4 +1,5 @@
 """MoneyWise Lambdas: create expense (+ upload URL), process bill via Textract, read group."""
+import base64
 import json
 import os
 import re
@@ -20,6 +21,18 @@ rekognition = boto3.client("rekognition", region_name=REGION)
 table = boto3.resource("dynamodb", region_name=REGION).Table(os.environ.get("TABLE", "local"))
 
 GROUP_RE = re.compile(r"^[a-z0-9-]{3,40}$")
+META = "#meta"  # per-group item holding the member list; '#' sorts before bill ids
+
+
+def parse_body(event):
+    """JSON body; API Gateway base64-encodes it when the client didn't say content-type: application/json."""
+    raw = event.get("body") or "{}"
+    if event.get("isBase64Encoded"):
+        raw = base64.b64decode(raw).decode()
+    body = json.loads(raw)
+    if not isinstance(body, dict):
+        raise ValueError("Send a JSON object")
+    return body
 
 
 def resp(code, body):
@@ -81,10 +94,14 @@ def read_lines(detections):
     return {"vendor": lines[0][0][:60] if lines else "", "date": date, "total": max(totals, default=None)}
 
 
-def split(total, members):
-    """Split cents evenly; leftover paise go to the first members."""
-    base, extra = divmod(total, len(members))
-    return {m: base + (1 if i < extra else 0) for i, m in enumerate(members)}
+def split(total, members, weights=None):
+    """Split cents by weights (equal if none). Largest remainder keeps every paisa; ties go to the first members."""
+    w = [Decimal(str(x)) for x in (weights or [1] * len(members))]
+    raw = [total * x / sum(w) for x in w]
+    cents = [int(r) for r in raw]
+    for i in sorted(range(len(members)), key=lambda i: raw[i] - cents[i], reverse=True)[:total - sum(cents)]:
+        cents[i] += 1
+    return dict(zip(members, cents))
 
 
 def balances(expenses):
@@ -96,7 +113,7 @@ def balances(expenses):
         if e.get("status") != "done":
             continue
         net[e["payer"]] += e["total"]
-        for m, share in split(e["total"], e["members"]).items():
+        for m, share in split(e["total"], e["members"], e.get("weights")).items():
             net[m] -= share
     return net
 
@@ -123,7 +140,24 @@ def validate(body):
     raw = body.get("members")
     if not isinstance(raw, list):
         raise ValueError("members must be a list")
-    members = list(dict.fromkeys(str(m).strip()[:30] for m in raw if str(m).strip()))
+    raw_w = body.get("weights")
+    if raw_w is None:
+        raw_w = [1] * len(raw)
+    if not isinstance(raw_w, list) or len(raw_w) != len(raw):
+        raise ValueError("One share per person")
+    shares = {}  # name -> weight; first occurrence wins, 0 = not in this bill
+    for m, w in zip(raw, raw_w):
+        m = str(m).strip()[:30]
+        try:
+            w = Decimal(str(w).strip())
+        except InvalidOperation:
+            raise ValueError("Shares must be numbers")
+        if not w.is_finite() or not 0 <= w <= 10_000_000:
+            raise ValueError("Shares must be between 0 and 1,00,00,000")
+        if m and m not in shares:
+            shares[m] = w
+    members = [m for m, w in shares.items() if w > 0]
+    weights = [shares[m] for m in members]
     payer = str(body.get("payer", "")).strip()[:30]
     if not 1 <= len(members) <= 20:
         raise ValueError("Split between 1 and 20 people")
@@ -140,7 +174,9 @@ def validate(body):
         total = int((d * 100).quantize(Decimal(1))) if d.is_finite() else 0
         if not 0 < total <= 10_000_000_00:
             raise ValueError("Amount must be a positive number")
-    return group, payer, members, note, total
+    if len(set(weights)) == 1:  # equal split: store nothing extra
+        weights = None
+    return group, payer, members, weights, note, total
 
 
 # ---------- handlers ----------
@@ -149,17 +185,19 @@ def create_expense(event, _ctx):
     """POST /expenses. With `amount`: saved immediately (manual entry / settle-up).
     Without: saved as 'processing' and returns a presigned URL for the bill photo."""
     try:
-        group, payer, members, note, total = validate(json.loads(event.get("body") or "{}"))
+        group, payer, members, weights, note, total = validate(parse_body(event))
     except (ValueError, json.JSONDecodeError) as e:
         return resp(400, {"error": str(e)})
 
     eid = f"{int(time.time() * 1000)}-{uuid.uuid4().hex[:8]}"
     item = {"groupId": group, "expenseId": eid, "payer": payer, "members": members, "note": note}
+    if weights:
+        item["weights"] = weights
     if total:
         table.put_item(Item={**item, "status": "done", "total": total, "vendor": note or "Manual entry"})
         return resp(201, {"id": eid})
 
-    table.put_item(Item={**item, "status": "processing"})
+    table.put_item(Item={**item, "status": "processing", "photo": True})
     url = s3.generate_presigned_url("put_object", ExpiresIn=300, Params={
         "Bucket": os.environ["BUCKET"], "Key": f"bills/{group}/{eid}", "ContentType": "image/jpeg"})
     return resp(201, {"id": eid, "uploadUrl": url})
@@ -205,20 +243,50 @@ def delete_expense(event, _ctx):
     if not GROUP_RE.match(group) or not re.match(r"^\d{13}-[0-9a-f]{8}$", eid):
         return resp(400, {"error": "Bad request"})
     table.delete_item(Key={"groupId": group, "expenseId": eid})
+    s3.delete_object(Bucket=os.environ["BUCKET"], Key=f"bills/{group}/{eid}")  # no-op if it was a manual entry
     return resp(200, {"deleted": eid})
 
 
+def update_members(event, _ctx):
+    """POST /groups/{group}/members {"add": name} | {"remove": name}. Atomic set ops, so two phones can't clobber."""
+    group = event["pathParameters"]["group"].lower()
+    try:
+        body = parse_body(event)
+    except ValueError:  # JSONDecodeError is a ValueError
+        body = {}
+    action = "ADD" if "add" in body else "DELETE" if "remove" in body else None
+    name = str(body.get("add", body.get("remove", ""))).strip()[:30]
+    if not GROUP_RE.match(group) or not action or not name:
+        return resp(400, {"error": "Send {\"add\": name} or {\"remove\": name}"})
+    table.update_item(Key={"groupId": group, "expenseId": META},
+                      UpdateExpression=f"{action} members :m", ExpressionAttributeValues={":m": {name}})
+    return resp(200, {"ok": True})
+
+
 def get_group(event, _ctx):
-    """GET /groups/{group} -> expenses, balances, who-pays-whom."""
+    """GET /groups/{group} -> members, expenses (with photo links), balances, who-pays-whom."""
     group = event["pathParameters"]["group"].lower()
     if not GROUP_RE.match(group):
         return resp(400, {"error": "Bad group code"})
     # ponytail: single Query page (1 MB, thousands of bills); paginate if a group ever outgrows it
     items = table.query(KeyConditionExpression=Key("groupId").eq(group), ScanIndexForward=False)["Items"]
-    expenses = [{
-        "id": i["expenseId"], "payer": i["payer"], "members": i["members"], "status": i["status"],
-        "total": int(i["total"]) if "total" in i else None, "vendor": i.get("vendor", ""),
-        "date": i.get("date", ""), "note": i.get("note", ""), "error": i.get("error", ""),
-    } for i in items]
+    meta = next((i for i in items if i["expenseId"] == META), {})
+    expenses = []
+    for i in items:
+        if i["expenseId"] == META:
+            continue
+        e = {"id": i["expenseId"], "payer": i["payer"], "members": i["members"], "status": i["status"],
+             "total": int(i["total"]) if "total" in i else None, "vendor": i.get("vendor", ""),
+             "date": i.get("date", ""), "note": i.get("note", ""), "error": i.get("error", ""),
+             "weights": i.get("weights"), "photo": None, "shares": None}
+        if i.get("photo"):
+            e["photo"] = s3.generate_presigned_url("get_object", ExpiresIn=3600, Params={
+                "Bucket": os.environ["BUCKET"], "Key": f"bills/{group}/{i['expenseId']}"})
+        if e["weights"] and e["total"]:
+            e["shares"] = split(e["total"], e["members"], e["weights"])
+        expenses.append(e)
     net = balances(expenses)
-    return resp(200, {"expenses": expenses, "balances": net, "settlements": settle(net)})
+    for e in expenses:  # Decimal -> JSON
+        e["weights"] = [float(w) for w in e["weights"]] if e["weights"] else None
+    return resp(200, {"members": sorted(set(meta.get("members", [])) | set(net)), "expenses": expenses,
+                      "balances": net, "settlements": settle(net)})

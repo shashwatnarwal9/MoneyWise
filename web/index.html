@@ -25,10 +25,17 @@
   body { margin: 0; background: var(--bg); color: var(--ink);
          font: 16px/1.45 "Bricolage Grotesque", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
   main { max-width: 34rem; margin: 0 auto; padding: 1rem 1rem 4rem; }
-  header { display: flex; align-items: center; justify-content: space-between; gap: .5rem; padding: .5rem 0 1.25rem; }
+  header { display: flex; align-items: center; justify-content: space-between; gap: .5rem; padding: .5rem 0 1rem; }
   h1 { font-size: 1.5rem; margin: 0; letter-spacing: -.03em; font-weight: 800; }
   h1 span { color: var(--accent); }
   h2 { font-size: .78rem; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin: 0 0 .75rem; font-weight: 600; }
+  /* tabs + group switcher */
+  nav { display: flex; gap: .5rem; align-items: center; margin-bottom: 1rem; }
+  .tabs, .seg { display: inline-flex; background: var(--soft); border-radius: 12px; padding: 3px; }
+  .tabs a, .seg button { display: inline-flex; align-items: center; min-height: 38px; padding: 0 1rem; border: 0; border-radius: 9px;
+                         background: none; color: var(--muted); font: inherit; font-weight: 600; text-decoration: none; cursor: pointer; }
+  .tabs a[aria-current="page"], .seg button[aria-pressed="true"] { background: var(--card); color: var(--ink); box-shadow: 0 1px 2px rgb(0 0 0 / .08); }
+  #switcher { width: auto; flex: 1; min-width: 0; max-width: 15rem; margin-left: auto; min-height: 44px; }
   /* once a group has bills, setup (People) moves to the bottom; balances + scan lead */
   #app { display: flex; flex-direction: column; }
   .col { display: contents; }
@@ -45,7 +52,7 @@
   .muted { color: var(--muted); font-size: .88rem; }
   button, input, select { font: inherit; color: inherit; }
   input, select { width: 100%; padding: .65rem .75rem; border: 1px solid var(--line); border-radius: 10px; background: var(--bg); }
-  input:focus-visible, select:focus-visible, button:focus-visible, label.btn:focus-within { outline: 2px solid var(--accent); outline-offset: 2px; }
+  input:focus-visible, select:focus-visible, button:focus-visible, a:focus-visible, label.btn:focus-within { outline: 2px solid var(--accent); outline-offset: 2px; }
   .btn { display: inline-flex; align-items: center; justify-content: center; gap: .5rem; border: 0; border-radius: 10px;
          padding: .65rem 1rem; background: var(--soft); cursor: pointer; font-weight: 600; white-space: nowrap; }
   .btn.primary { background: var(--accent); color: var(--accent-ink); }
@@ -54,16 +61,24 @@
   .btn, .chip { transition: filter .15s ease-out, transform .1s ease-out, border-color .15s ease-out; }
   @media (hover: hover) { .btn:hover, .chip:hover { filter: brightness(.93); } }
   .btn:active, .chip:active { transform: translateY(1px); }
+  .link { border: 0; background: none; padding: 0; color: var(--accent); font: inherit; text-decoration: underline; cursor: pointer; }
   .row { display: flex; gap: .5rem; align-items: center; }
   .row > input { flex: 1; }
-  label.field { display: block; margin-bottom: .9rem; }
-  label.field > span { display: block; font-size: .85rem; font-weight: 600; margin-bottom: .3rem; }
+  label.field, div.field { display: block; margin-bottom: .9rem; }
+  label.field > span, .lbl { display: block; font-size: .85rem; font-weight: 600; margin-bottom: .3rem; }
   .chips { display: flex; flex-wrap: wrap; gap: .4rem; margin-bottom: .75rem; }
   .chip { border: 1px solid var(--line); background: var(--bg); border-radius: 999px; padding: .3rem .75rem; font-size: .9rem; cursor: pointer; }
   .chip { position: relative; }
   .chip::after { content: ""; position: absolute; inset: -6px -3px; }  /* 44px tap area, same look */
   .chip[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
   .chip .x { margin-left: .35rem; opacity: .6; }
+  /* split mode */
+  .split-head { display: flex; align-items: center; justify-content: space-between; gap: .5rem; margin-bottom: .6rem; }
+  .split-head .lbl { margin: 0; }
+  .share { display: grid; grid-template-columns: 1fr 7.5rem; align-items: center; gap: .5rem; margin-bottom: .4rem; }
+  .share input { text-align: right; font-family: var(--mono); }
+  .hint { margin: 0 0 .6rem; }
+  #sharesSum { margin: .2rem 0 .9rem; text-align: right; }
   #status { min-height: 1.4em; margin: .75rem 0 0; font-size: .92rem; }
   #status.err { color: var(--owe); }
   #status:empty { min-height: 0; margin: 0; }  /* no dead space; stays in a11y tree for aria-live */
@@ -81,22 +96,35 @@
   .debt:last-child { border-bottom: 0; }
   .debt .who { flex: 1; min-width: 0; }
   .debt .amt { font-weight: 700; color: var(--owe); }
-  .bal { display: flex; justify-content: space-between; font-size: .9rem; padding: .15rem 0; }
-  .pos { color: var(--accent); } .neg { color: var(--owe); }
-  .bill { display: flex; gap: .75rem; padding: .75rem 0; border-bottom: 1px solid var(--line); }
-  .bill:last-child { border-bottom: 0; }
-  .bill .info { flex: 1; min-width: 0; }
-  .bill .title { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .bill .del { border: 0; background: none; color: var(--muted); font-size: 1.2rem; line-height: 1; padding: 0; cursor: pointer; align-self: flex-start;
-               min-width: 44px; min-height: 44px; margin: -.75rem -.75rem 0 -.5rem; border-radius: 10px; }
-  .bill .del:hover { color: var(--owe); }
+  .bill, .hist { display: flex; gap: .75rem; padding: .75rem 0; border-bottom: 1px solid var(--line); }
+  .bill:last-child, .hist:last-child { border-bottom: 0; }
+  .bill .info, .hist .info { flex: 1; min-width: 0; }
+  .bill .title, .hist .title { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .del { border: 0; background: none; color: var(--muted); font-size: 1.2rem; line-height: 1; padding: 0; cursor: pointer; align-self: flex-start;
+         min-width: 44px; min-height: 44px; margin: -.75rem -.75rem 0 -.5rem; border-radius: 10px; }
+  .del:hover { color: var(--owe); }
   .bill.failed .title, .bill.failed .err { color: var(--owe); }
   .skeleton { display: inline-block; width: 4.5rem; height: 1em; border-radius: 4px; background: linear-gradient(90deg, var(--soft), var(--line), var(--soft)); background-size: 200% 100%; animation: shimmer 1.2s infinite; }
   @keyframes shimmer { to { background-position: -200% 0; } }
   @media (prefers-reduced-motion: reduce) { .skeleton { animation: none; } }
-  .hero { padding: 2rem 0 1rem; }
+  /* history */
+  .hist { align-items: center; }
+  .thumb { width: 56px; height: 56px; flex: none; border-radius: 10px; overflow: hidden; border: 1px solid var(--line);
+           padding: 0; background: var(--soft); cursor: zoom-in; }
+  .thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .thumb.none { display: grid; place-items: center; color: var(--muted); font-weight: 700; cursor: default; }
+  .hist a { color: inherit; }
+  dialog#viewer { border: 0; border-radius: 14px; padding: .75rem; background: var(--card); color: var(--ink); max-width: min(92vw, 40rem); }
+  dialog#viewer::backdrop { background: rgb(0 0 0 / .6); }
+  #viewerImg { display: block; max-width: 100%; max-height: 78vh; border-radius: 8px; margin: 0 auto .75rem; }
+  /* landing */
+  .hero { padding: 1.5rem 0 1rem; }
   .hero p.lead { font-size: 2.4rem; line-height: 1.05; font-weight: 800; letter-spacing: -.035em; margin: 0 0 .75rem; text-wrap: balance; }
   .steps { padding-left: 1.2rem; color: var(--muted); font-size: .92rem; }
+  .grow { display: flex; align-items: center; border-bottom: 1px solid var(--line); }
+  .grow:last-child { border-bottom: 0; }
+  .grow a { flex: 1; padding: .8rem 0; font-weight: 600; color: var(--ink); text-decoration: none; }
+  .grow .del { margin: 0 -.75rem 0 0; align-self: center; }
   .empty { color: var(--muted); font-size: .92rem; margin: 0; }
   .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
 </style>
@@ -108,15 +136,28 @@
     <button class="btn" id="share" hidden>Share group</button>
   </header>
 
-  <!-- landing -->
+  <nav id="nav" hidden>
+    <div class="tabs">
+      <a id="tabGroup" href="#">Group</a>
+      <a id="tabHistory" href="#/history">History</a>
+    </div>
+    <label class="sr" for="switcher">Switch group</label>
+    <select id="switcher" hidden></select>
+  </nav>
+
+  <!-- landing: your groups + join/create -->
   <section id="join" hidden>
     <div class="hero">
       <p class="lead">Snap the bill.<br>We'll do the maths.</p>
       <p class="muted">Upload a photo of any bill. Amazon Textract reads the total and MoneyWise splits it across your group.</p>
     </div>
+    <div class="card" id="myGroups" hidden>
+      <h2>Your groups</h2>
+      <div id="glist"></div>
+    </div>
     <form class="card" id="joinForm">
-      <label class="field"><span>Group code</span>
-        <input id="groupInput" placeholder="e.g. room-204" autocomplete="off" required pattern="[a-zA-Z0-9\-]{3,40}"
+      <label class="field"><span>Join or create a group</span>
+        <input id="groupInput" placeholder="Group code, e.g. room-204" autocomplete="off" required pattern="[a-zA-Z0-9\-]{3,40}"
                title="3-40 letters, numbers or dashes"></label>
       <button class="btn primary big">Open group</button>
       <ol class="steps">
@@ -127,7 +168,7 @@
     </form>
   </section>
 
-  <!-- group -->
+  <!-- one group -->
   <section id="app" hidden>
    <div class="col">
     <div class="card" id="peopleCard">
@@ -143,14 +184,27 @@
     <div class="card" id="addBill">
       <h2>Add a bill</h2>
       <label class="field"><span>Paid by</span><select id="payer"></select></label>
-      <div class="field"><span style="display:block;font-size:.85rem;font-weight:600;margin-bottom:.3rem">Split between</span>
-        <div class="chips" id="splitWith"></div></div>
+      <div class="field">
+        <div class="split-head">
+          <span class="lbl">Split</span>
+          <div class="seg" role="group" aria-label="How to split">
+            <button type="button" data-mode="equal" aria-pressed="true">Equally</button>
+            <button type="button" data-mode="unequal" aria-pressed="false">Unequally</button>
+          </div>
+        </div>
+        <div class="chips" id="splitWith"></div>
+        <div id="sharesBox" hidden>
+          <p class="muted hint">Each person's ₹ amount, or parts (2 = double). A scanned total, tax included, is split in this ratio. Leave blank to skip someone.</p>
+          <div id="shares"></div>
+          <p class="muted" id="sharesSum"></p>
+        </div>
+      </div>
       <label class="btn primary big" id="scanBtn"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 8.5A2.5 2.5 0 0 1 5.5 6H7l2-2h6l2 2h1.5A2.5 2.5 0 0 1 21 8.5v9a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 17.5z"/><circle cx="12" cy="12.5" r="3.5"/></svg>Scan a bill
         <input type="file" id="photo" accept="image/*" capture="environment" class="sr"></label>
       <details>
         <summary>Or type it in</summary>
         <form class="manual" id="manual">
-          <label class="field"><span>Amount (₹)</span><input id="amount" inputmode="decimal" placeholder="0.00" required></label>
+          <label class="field"><span>Amount (₹)</span><input id="amount" inputmode="decimal" placeholder="0.00"></label>
           <label class="field"><span>What for</span><input id="note" placeholder="e.g. Chai" maxlength="60"></label>
           <button class="btn">Save</button>
         </form>
@@ -171,6 +225,19 @@
     </div>
    </div>
   </section>
+
+  <!-- every bill across your groups -->
+  <section id="history" hidden>
+    <div class="card">
+      <h2 id="histHead">All bills</h2>
+      <div id="histList"></div>
+    </div>
+  </section>
+
+  <dialog id="viewer">
+    <img id="viewerImg" alt="Bill photo">
+    <form method="dialog"><button class="btn" style="width:100%">Close</button></form>
+  </dialog>
 </main>
 
 <script>
@@ -178,16 +245,28 @@ const API = window.API;
 const $ = s => document.querySelector(s);
 const money = c => (c / 100).toLocaleString('en-IN', { style: 'currency', currency: 'INR' });
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => `&#${c.charCodeAt(0)};`);
-const group = decodeURIComponent(location.hash.slice(1)).toLowerCase();
-const peopleKey = 'mw-people-' + group;
+const GROUP_RE = /^[a-z0-9-]{3,40}$/;
+const myGroups = () => JSON.parse(localStorage.getItem('mw-groups') || '[]');
+const saveGroups = gs => localStorage.setItem('mw-groups', JSON.stringify(gs));
 
-let data = { expenses: [], balances: {}, settlements: [] };
-let localPeople = JSON.parse(localStorage.getItem(peopleKey) || '[]');
-let excluded = new Set();      // people unticked in "split between"
+// Route: #<group> | #/history | #/new. Empty hash reopens your last group.
+let route = decodeURIComponent(location.hash.slice(1));
+const last = localStorage.getItem('mw-last');
+if (!route && last && myGroups().includes(last)) { history.replaceState(null, '', '#' + last); route = last; }
+const group = GROUP_RE.test(route.toLowerCase()) ? route.toLowerCase() : null;
+
+let data = { members: [], expenses: [], balances: {}, settlements: [] };
+let mode = 'equal';            // split mode for the next bill
+let excluded = new Set();      // equal mode: people unticked
+let shares = {};               // unequal mode: name -> typed share
+let splitKey = '';             // re-render split inputs only when people/mode change (keeps focus while typing)
 let pendingId = null, timer = null;
 
-const everyone = () => [...new Set([...localPeople, ...Object.keys(data.balances)])];
 const isStale = e => Date.now() - parseInt(e.id) > 120000;  // id starts with ms timestamp
+const sumShares = () => Object.values(shares).reduce((a, v) => a + (parseFloat(v) > 0 ? parseFloat(v) : 0), 0);
+const splitText = e => e.shares
+  ? 'split unequally: ' + Object.entries(e.shares).map(([n, c]) => `${esc(n)} ${money(c)}`).join(', ')
+  : 'split with ' + e.members.map(esc).join(', ');
 
 function status(msg, err = false) { $('#status').textContent = msg; $('#status').className = err ? 'err' : ''; }
 
@@ -198,32 +277,62 @@ async function api(path, body, method = body ? 'POST' : 'GET') {
   return j;
 }
 
+function setupNav(tab) {
+  const gs = myGroups();
+  if (!gs.length) return;
+  $('#nav').hidden = false;
+  $('#tabGroup').href = '#' + (group || localStorage.getItem('mw-last') || gs[0]);
+  if (tab) $('#tab' + tab).setAttribute('aria-current', 'page');
+  if (!group) return;
+  const sw = $('#switcher');
+  sw.hidden = false;
+  sw.innerHTML = gs.map(g => `<option value="${esc(g)}">${esc(g)}</option>`).join('') + '<option value="/new">＋ New or join group…</option>';
+  sw.value = group;
+  sw.onchange = () => { location.hash = sw.value; };
+}
+
+// ---------- group view ----------
 async function load() {
   clearTimeout(timer);
   try { data = await api('/groups/' + group); } catch (e) { return status(e.message, true); }
   render();
   const p = pendingId && data.expenses.find(e => e.id === pendingId);
-  if (p && p.status === 'done') { status(`✓ ${money(p.total)}${p.vendor ? ' at ' + p.vendor : ''}, split ${p.members.length} ways`); pendingId = null; }
+  if (p && p.status === 'done') { status(`✓ ${money(p.total)}${p.vendor ? ' at ' + p.vendor : ''}, split ${p.shares ? 'unequally' : p.members.length + ' ways'}`); pendingId = null; }
   if (p && p.status === 'failed') { status(p.error, true); pendingId = null; }
   if (data.expenses.some(e => e.status === 'processing' && !isStale(e))) timer = setTimeout(load, 1500);
 }
 
+function renderSplit(all) {
+  document.querySelectorAll('[data-mode]').forEach(b => b.setAttribute('aria-pressed', b.dataset.mode === mode));
+  $('#splitWith').hidden = mode !== 'equal';
+  $('#sharesBox').hidden = mode !== 'unequal';
+  $('#splitWith').innerHTML = all.map(n => `<button type="button" class="chip" data-toggle="${esc(n)}" aria-pressed="${!excluded.has(n)}">${esc(n)}</button>`).join('');
+  $('#shares').innerHTML = all.map(n => `<label class="share"><span>${esc(n)}</span>
+      <input inputmode="decimal" data-share="${esc(n)}" value="${esc(shares[n] ?? '')}" placeholder="0" aria-label="${esc(n)}'s share"></label>`).join('');
+  updateSum();
+}
+
+function updateSum() {
+  const s = sumShares();
+  $('#sharesSum').textContent = s ? `Shares add up to ${s.toLocaleString('en-IN')}` : '';
+  $('#amount').placeholder = mode === 'unequal' && s ? s.toFixed(2) : '0.00';
+}
+
 function render() {
-  const all = everyone();
+  const all = data.members;
   // people chips (only names not yet in any bill can be removed)
   $('#people').innerHTML = all.length ? all.map(n => data.balances[n] === undefined
-      ? `<button class="chip" data-remove="${esc(n)}">${esc(n)}<span class="x" aria-label="remove">×</span></button>`
+      ? `<button class="chip" data-remove="${esc(n)}" aria-label="Remove ${esc(n)}">${esc(n)}<span class="x" aria-hidden="true">×</span></button>`
       : `<span class="chip" style="cursor:default">${esc(n)}</span>`).join('')
-    : '<p class="empty">Add everyone who shares bills.</p>';
-  // payer select, keep current choice
+    : '<p class="empty">Add everyone who shares bills in this group.</p>';
   const sel = $('#payer'), keep = sel.value || localStorage.getItem('mw-me');
   sel.innerHTML = all.map(n => `<option>${esc(n)}</option>`).join('');
   if (all.includes(keep)) sel.value = keep;
-  $('#splitWith').innerHTML = all.map(n => `<button type="button" class="chip" data-toggle="${esc(n)}" aria-pressed="${!excluded.has(n)}">${esc(n)}</button>`).join('');
+  const key = mode + '|' + all.join('|');
+  if (key !== splitKey) { splitKey = key; renderSplit(all); }
   $('#addBill').style.opacity = all.length ? 1 : .5;
   $('#app').classList.toggle('ready', data.expenses.length > 0);
 
-  // who owes whom
   const s = data.settlements;
   $('#debts').innerHTML = s.length ? s.map((t, i) => `
       <div class="debt"><div class="who"><b>${esc(t.from)}</b> <span class="muted">pays</span> <b>${esc(t.to)}</b></div>
@@ -231,26 +340,30 @@ function render() {
         <button class="btn" data-settle="${i}">Settle</button></div>`).join('')
     : `<p class="empty">${data.expenses.length ? 'All square 🎉' : 'Nothing yet. Scan your first bill.'}</p>`;
 
-  // bills
   $('#bills').innerHTML = data.expenses.length ? data.expenses.map(e => {
     const stuck = e.status === 'processing' && isStale(e);
     const title = e.status === 'processing' ? (stuck ? 'Upload didn’t finish' : 'Reading bill…') : e.status === 'failed' ? 'Couldn’t read bill' : (e.vendor || 'Bill');
     const right = e.status === 'done' ? `<span class="amt">${money(e.total)}</span>` : e.status === 'processing' && !stuck ? '<span class="skeleton"></span>' : '<span class="amt muted">—</span>';
     return `<div class="bill ${e.status === 'failed' || stuck ? 'failed' : ''}"><div class="info">
         <div class="title">${esc(title)}</div>
-        <div class="muted">${e.date ? esc(e.date) + ' · ' : ''}paid by ${esc(e.payer)} · split with ${e.members.map(esc).join(', ')}</div>
+        <div class="muted">${e.date ? esc(e.date) + ' · ' : ''}paid by ${esc(e.payer)} · ${splitText(e)}${e.photo ? ` · <button class="link" data-photo="${esc(e.photo)}">photo</button>` : ''}</div>
         ${e.status === 'failed' ? `<div class="muted err">${esc(e.error)}</div>` : ''}
       </div>${right}<button class="del" data-del="${esc(e.id)}" aria-label="Delete ${esc(title)}" title="Delete">×</button></div>`;
   }).join('') : '<p class="empty">No bills yet.</p>';
 }
 
-function savePeople() { localStorage.setItem(peopleKey, JSON.stringify(localPeople)); render(); }
-
 function splitFields() {
-  const members = everyone().filter(n => !excluded.has(n));
+  const payer = $('#payer').value;
+  if (!payer) throw new Error('Add the people in this group first');
+  localStorage.setItem('mw-me', payer);
+  if (mode === 'unequal') {
+    const ps = data.members.map(n => [n, parseFloat(shares[n]) || 0]).filter(([, w]) => w > 0);
+    if (!ps.length) throw new Error('Enter a share for at least one person');
+    return { group, payer, members: ps.map(p => p[0]), weights: ps.map(p => p[1]) };
+  }
+  const members = data.members.filter(n => !excluded.has(n));
   if (!members.length) throw new Error('Pick at least one person to split with');
-  localStorage.setItem('mw-me', $('#payer').value);
-  return { group, payer: $('#payer').value, members };
+  return { group, payer, members };
 }
 
 // Phone photos are 3-12 MB; shrink to ~2000px JPEG so upload is fast and under Textract's 10 MB limit.
@@ -275,24 +388,68 @@ async function scan(file) {
     pendingId = id;
     const up = await fetch(uploadUrl, { method: 'PUT', headers: { 'content-type': 'image/jpeg' }, body: blob });
     if (!up.ok) throw new Error('Upload failed. Check your connection and try again.');
-    status('Reading the bill with Amazon Textract…');
+    status('Reading the bill…');
     await load();
   } catch (e) { status(e.message, true); }
   finally { btn.style.pointerEvents = ''; btn.style.opacity = ''; $('#photo').value = ''; }
 }
 
-// ---------- wiring ----------
-if (!API) {
-  document.body.innerHTML = '<main><p class="card">config.js missing. Deploy with <code>deploy.ps1</code>, which writes it.</p></main>';
-} else if (!/^[a-z0-9-]{3,40}$/.test(group)) {
-  $('#join').hidden = false;
-  $('#joinForm').onsubmit = e => { e.preventDefault(); location.hash = $('#groupInput').value.trim().toLowerCase(); };
-} else {
+async function showGroup() {
+  saveGroups([group, ...myGroups().filter(g => g !== group)]);
+  localStorage.setItem('mw-last', group);
+  setupNav('Group');
   $('#app').hidden = false; $('#share').hidden = false;
   $('#groupName').textContent = group;
   document.title = `${group} · MoneyWise`;
+  // names used to live only on this phone; move them to the server once
+  const legacy = JSON.parse(localStorage.getItem('mw-people-' + group) || '[]');
+  if (legacy.length) {
+    await Promise.all(legacy.map(n => api(`/groups/${group}/members`, { add: n }))).catch(() => {});
+    localStorage.removeItem('mw-people-' + group);
+  }
   load();
 }
+
+// ---------- history ----------
+async function showHistory() {
+  setupNav('History');
+  $('#history').hidden = false;
+  document.title = 'History · MoneyWise';
+  const gs = myGroups();
+  if (!gs.length) { $('#histList').innerHTML = '<p class="empty">No groups yet. <a href="#/new">Open a group</a> and scan a bill.</p>'; return; }
+  $('#histList').innerHTML = '<p class="empty">Loading…</p>';
+  const lists = await Promise.all(gs.map(g => api('/groups/' + g).then(d => d.expenses.map(e => ({ ...e, group: g }))).catch(() => [])));
+  const all = lists.flat().filter(e => e.status !== 'processing' || !isStale(e)).sort((a, b) => b.id.localeCompare(a.id));
+  const spent = all.reduce((a, e) => a + (e.status === 'done' && !e.vendor.startsWith('Settle-up') ? e.total : 0), 0);
+  $('#histHead').textContent = `All bills · ${all.length} · ${money(spent)}`;
+  $('#histList').innerHTML = all.length ? all.map(e => {
+    const title = e.status === 'processing' ? 'Reading bill…' : e.status === 'failed' ? 'Couldn’t read bill' : (e.vendor || 'Bill');
+    const when = new Date(parseInt(e.id)).toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' });
+    return `<div class="hist">
+        ${e.photo ? `<button class="thumb" data-photo="${esc(e.photo)}" aria-label="View photo: ${esc(title)}"><img src="${esc(e.photo)}" alt="" loading="lazy"></button>`
+                  : '<div class="thumb none" aria-hidden="true">₹</div>'}
+        <div class="info"><div class="title">${esc(title)}</div>
+          <div class="muted">${esc(when)} · <a href="#${esc(e.group)}">${esc(e.group)}</a> · paid by ${esc(e.payer)}</div></div>
+        <span class="amt">${e.status === 'done' ? money(e.total) : '—'}</span></div>`;
+  }).join('') : '<p class="empty">No bills yet in your groups.</p>';
+}
+
+// ---------- landing ----------
+function showJoin() {
+  setupNav(null);
+  $('#join').hidden = false;
+  const gs = myGroups();
+  $('#myGroups').hidden = !gs.length;
+  $('#glist').innerHTML = gs.map(g => `<div class="grow"><a href="#${esc(g)}">${esc(g)}</a>
+      <button class="del" data-leave="${esc(g)}" aria-label="Remove ${esc(g)} from your list" title="Remove from list">×</button></div>`).join('');
+  $('#joinForm').onsubmit = e => { e.preventDefault(); location.hash = $('#groupInput').value.trim().toLowerCase(); };
+}
+
+// ---------- wiring ----------
+if (!API) document.body.innerHTML = '<main><p class="card">config.js missing. Deploy with <code>deploy.ps1</code>, which writes it.</p></main>';
+else if (route === '/history') showHistory();
+else if (group) showGroup();
+else showJoin();
 window.onhashchange = () => location.reload();
 
 $('#share').onclick = async () => {
@@ -302,37 +459,57 @@ $('#share').onclick = async () => {
   prompt('Copy this link and send it to your group:', url);   // S3 website is http, so no clipboard API
 };
 
-$('#addPerson').onsubmit = e => {
+$('#addPerson').onsubmit = async e => {
   e.preventDefault();
   const n = $('#personInput').value.trim().slice(0, 30);
-  if (n && !everyone().includes(n)) { localPeople.push(n); savePeople(); }
   $('#personInput').value = '';
+  if (!n || data.members.includes(n)) return;
+  try { await api(`/groups/${group}/members`, { add: n }); await load(); } catch (err) { status(err.message, true); }
 };
 
+document.addEventListener('input', e => {
+  if (e.target.dataset.share === undefined) return;
+  shares[e.target.dataset.share] = e.target.value;
+  updateSum();
+});
+
 document.addEventListener('click', async e => {
-  const t = e.target.closest('[data-remove],[data-toggle],[data-settle],[data-del]');
+  const t = e.target.closest('[data-remove],[data-toggle],[data-settle],[data-del],[data-mode],[data-photo],[data-leave]');
   if (!t) return;
-  if (t.dataset.del && confirm('Delete this bill? Balances will update.')) {
-    try { await api(`/groups/${group}/expenses/${t.dataset.del}`, null, 'DELETE'); await load(); }
+  const d = t.dataset;
+  if (d.photo) { $('#viewerImg').src = d.photo; $('#viewer').showModal(); }
+  if (d.mode) { mode = d.mode; splitKey = ''; render(); }
+  if (d.toggle !== undefined) { excluded.has(d.toggle) ? excluded.delete(d.toggle) : excluded.add(d.toggle); t.setAttribute('aria-pressed', !excluded.has(d.toggle)); }
+  if (d.remove !== undefined) {
+    try { await api(`/groups/${group}/members`, { remove: d.remove }); await load(); } catch (err) { status(err.message, true); }
+  }
+  if (d.leave && confirm(`Remove ${d.leave} from your list? The group and its bills stay; open the code again to rejoin.`)) {
+    saveGroups(myGroups().filter(g => g !== d.leave));
+    if (localStorage.getItem('mw-last') === d.leave) localStorage.removeItem('mw-last');
+    showJoin();
+  }
+  if (d.del && confirm('Delete this bill and its photo? Balances will update.')) {
+    try { await api(`/groups/${group}/expenses/${d.del}`, null, 'DELETE'); await load(); }
     catch (err) { status(err.message, true); }
   }
-  if (t.dataset.remove !== undefined) { localPeople = localPeople.filter(n => n !== t.dataset.remove); savePeople(); }
-  if (t.dataset.toggle !== undefined) { const n = t.dataset.toggle; excluded.has(n) ? excluded.delete(n) : excluded.add(n); render(); }
-  if (t.dataset.settle !== undefined) {
-    const s = data.settlements[t.dataset.settle];
+  if (d.settle !== undefined) {
+    const s = data.settlements[d.settle];
     if (!confirm(`Mark that ${s.from} paid ${s.to} ${money(s.amount)}?`)) return;
     t.disabled = true;
     try { await api('/expenses', { group, payer: s.from, members: [s.to], amount: (s.amount / 100).toFixed(2), note: `Settle-up: ${s.from} → ${s.to}` }); await load(); }
     catch (err) { status(err.message, true); t.disabled = false; }
   }
 });
+$('#viewer').onclick = e => { if (e.target === $('#viewer')) $('#viewer').close(); };  // tap outside to close
 
 $('#photo').onchange = e => e.target.files[0] && scan(e.target.files[0]);
 
 $('#manual').onsubmit = async e => {
   e.preventDefault();
   try {
-    await api('/expenses', { ...splitFields(), amount: $('#amount').value, note: $('#note').value });
+    const amount = $('#amount').value.trim() || (mode === 'unequal' && sumShares() ? sumShares().toFixed(2) : '');
+    if (!amount) throw new Error('Enter the amount');
+    await api('/expenses', { ...splitFields(), amount, note: $('#note').value });
     $('#amount').value = $('#note').value = '';
     status('✓ Saved'); await load();
   } catch (err) { status(err.message, true); }

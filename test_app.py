@@ -33,6 +33,10 @@ assert app.read_lines([])["total"] is None
 
 # split keeps every paisa
 assert app.split(100, ["a", "b", "c"]) == {"a": 34, "b": 33, "c": 33}
+# unequal: by parts, and by rupee amounts (₹330.75 bill, A ate ₹210, B ₹120 -> tax shared in ratio)
+assert app.split(1000, ["a", "b"], [3, 1]) == {"a": 750, "b": 250}
+assert app.split(33075, ["A", "B"], [210, 120]) == {"A": 21048, "B": 12027}
+assert sum(app.split(100, ["a", "b", "c"], [1, 1, 2]).values()) == 100
 
 # balances + settle-up
 exp = [
@@ -45,14 +49,23 @@ assert net == {"A": 20000, "B": -5000, "C": -15000}, net
 assert sum(net.values()) == 0
 s = app.settle(net)
 assert s == [{"from": "C", "to": "A", "amount": 15000}, {"from": "B", "to": "A", "amount": 5000}], s
+# weighted bill in balances: A pays 300, A:B = 2:1
+assert app.balances([{"payer": "A", "members": ["A", "B"], "weights": [2, 1], "status": "done", "total": 30000}]) == {"A": 10000, "B": -10000}
 # paying a settlement (payer=debtor, members=[creditor]) zeroes it out
 exp += [{"payer": t["from"], "members": [t["to"]], "status": "done", "total": t["amount"]} for t in s]
 assert all(v == 0 for v in app.balances(exp).values())
 
 # validation
-g, p, m, n, t = app.validate({"group": "Room-204", "payer": "A", "members": ["A", " B ", "A", ""], "amount": "12.5"})
-assert (g, p, m, t) == ("room-204", "A", ["A", "B"], 1250)
+g, p, m, w, n, t = app.validate({"group": "Room-204", "payer": "A", "members": ["A", " B ", "A", ""], "amount": "12.5"})
+assert (g, p, m, w, t) == ("room-204", "A", ["A", "B"], None, 1250)
+# unequal: zero share drops the person, duplicates keep the first share
+_, _, m, w, _, _ = app.validate({"group": "room", "payer": "A", "members": ["A", "B", "C", "A"], "weights": [2, "1.5", 0, 9]})
+assert m == ["A", "B"] and [float(x) for x in w] == [2, 1.5]
+assert app.validate({"group": "room", "payer": "A", "members": ["A", "B"], "weights": [3, 3]})[3] is None
 for bad in ({"group": "x", "payer": "A", "members": ["A"]},
+            {"group": "room", "payer": "A", "members": ["A", "B"], "weights": [1]},
+            {"group": "room", "payer": "A", "members": ["A"], "weights": ["-1"]},
+            {"group": "room", "payer": "A", "members": ["A"], "weights": [0]},
             {"group": "room", "payer": "A", "members": "A"},
             {"group": "room", "payer": "A", "members": ["A"], "amount": "-5"},
             {"group": "room", "payer": "A", "members": ["A"], "amount": "Infinity"},
@@ -62,5 +75,10 @@ for bad in ({"group": "x", "payer": "A", "members": ["A"]},
         raise AssertionError(f"should reject {bad}")
     except ValueError:
         pass
+
+# body parsing: plain and base64 (API Gateway does that without a JSON content-type)
+assert app.parse_body({"body": '{"a": 1}'}) == {"a": 1}
+assert app.parse_body({"body": "eyJhIjogMX0=", "isBase64Encoded": True}) == {"a": 1}
+assert app.parse_body({}) == {}
 
 print("all checks pass")
