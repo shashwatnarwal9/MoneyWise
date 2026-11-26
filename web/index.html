@@ -48,6 +48,9 @@
   .btn.primary { background: var(--accent); color: var(--accent-ink); }
   .btn.big { width: 100%; padding: 1rem; font-size: 1.05rem; border-radius: 12px; }
   .btn:disabled { opacity: .5; cursor: progress; }
+  .btn, .chip { transition: filter .15s ease-out, transform .1s ease-out, border-color .15s ease-out; }
+  @media (hover: hover) { .btn:hover, .chip:hover { filter: brightness(.93); } }
+  .btn:active, .chip:active { transform: translateY(1px); }
   .row { display: flex; gap: .5rem; align-items: center; }
   .row > input { flex: 1; }
   label.field { display: block; margin-bottom: .9rem; }
