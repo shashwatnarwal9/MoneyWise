@@ -67,7 +67,8 @@
   .bill:last-child { border-bottom: 0; }
   .bill .info { flex: 1; min-width: 0; }
   .bill .title { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .bill .del { border: 0; background: none; color: var(--muted); font-size: 1.2rem; line-height: 1; padding: 0 .25rem; cursor: pointer; align-self: flex-start; }
+  .bill .del { border: 0; background: none; color: var(--muted); font-size: 1.2rem; line-height: 1; padding: 0; cursor: pointer; align-self: flex-start;
+               min-width: 44px; min-height: 44px; margin: -.75rem -.75rem 0 -.5rem; border-radius: 10px; }
   .bill .del:hover { color: var(--owe); }
   .bill.failed .title, .bill.failed .err { color: var(--owe); }
   .skeleton { display: inline-block; width: 4.5rem; height: 1em; border-radius: 4px; background: linear-gradient(90deg, var(--soft), var(--line), var(--soft)); background-size: 200% 100%; animation: shimmer 1.2s infinite; }
