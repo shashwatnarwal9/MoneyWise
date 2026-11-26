@@ -7,7 +7,7 @@ sam deploy --stack-name $stack --resolve-s3 --capabilities CAPABILITY_IAM `
 if ($LASTEXITCODE) { exit 1 }
 
 $o = @{}
-foreach ($key in "ApiUrl", "WebsiteUrl", "WebsiteBucketName") {
+foreach ($key in "ApiUrl", "AppUrl", "WebsiteBucketName") {
   $o[$key] = aws cloudformation describe-stacks --stack-name $stack `
     --query "Stacks[0].Outputs[?OutputKey=='$key'].OutputValue" --output text
 }
@@ -18,4 +18,4 @@ aws s3 sync web "s3://$($o.WebsiteBucketName)" --delete --cache-control "no-cach
 if ($LASTEXITCODE) { exit 1 }
 
 Write-Host "`nAPI:  $($o.ApiUrl)"
-Write-Host "Site: $($o.WebsiteUrl)" -ForegroundColor Green
+Write-Host "Site: $($o.AppUrl)" -ForegroundColor Green

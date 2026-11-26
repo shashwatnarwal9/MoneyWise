@@ -53,6 +53,37 @@ Resources:
             Action: s3:GetObject
             Resource: !Sub "${WebsiteBucket.Arn}/*"
 
+  # HTTPS for the website: S3 website endpoints are http-only and phones increasingly refuse http.
+  # API Gateway already serves HTTPS, so it proxies every non-API path to the S3 website.
+  # More specific routes (/expenses, /groups/...) still win over /{proxy+}.
+  # ponytail: CloudFront is the usual answer, but new accounts can't create it until AWS verifies them; switch once verified.
+  SiteIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref Api
+      IntegrationType: HTTP_PROXY
+      IntegrationMethod: GET
+      IntegrationUri: !Sub
+        - "http://${Host}/{proxy}"
+        - Host: !Select [2, !Split ["/", !GetAtt WebsiteBucket.WebsiteURL]]
+      PayloadFormatVersion: "1.0"
+  SiteRootIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref Api
+      IntegrationType: HTTP_PROXY
+      IntegrationMethod: GET
+      IntegrationUri: !Sub
+        - "http://${Host}/index.html"
+        - Host: !Select [2, !Split ["/", !GetAtt WebsiteBucket.WebsiteURL]]
+      PayloadFormatVersion: "1.0"
+  SiteRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties: { ApiId: !Ref Api, RouteKey: "GET /{proxy+}", Target: !Sub "integrations/${SiteIntegration}" }
+  SiteRootRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties: { ApiId: !Ref Api, RouteKey: "GET /", Target: !Sub "integrations/${SiteRootIntegration}" }
+
   Expenses:
     Type: AWS::DynamoDB::Table
     Properties:
@@ -73,8 +104,8 @@ Resources:
         AllowMethods: [GET, POST, DELETE]
         AllowHeaders: [content-type]
       DefaultRouteSettings: # cheap guard against someone burning your Textract budget
-        ThrottlingBurstLimit: 20
-        ThrottlingRateLimit: 5
+        ThrottlingBurstLimit: 40
+        ThrottlingRateLimit: 10
 
   # ---------- functions ----------
   CreateExpenseFunction:
@@ -146,6 +177,8 @@ Resources:
           Properties: { ApiId: !Ref Api, Path: "/groups/{group}/members", Method: POST }
 
 Outputs:
+  AppUrl:
+    Value: !Sub "https://${Api}.execute-api.${AWS::Region}.amazonaws.com/"
   WebsiteUrl:
     Value: !GetAtt WebsiteBucket.WebsiteURL
   ApiUrl:

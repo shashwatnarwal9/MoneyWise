@@ -28,7 +28,7 @@ All Lambda logs ──► CloudWatch Logs
 
 1. `aws configure` with an IAM user that can create CloudFormation stacks, IAM roles, S3, Lambda, API Gateway, DynamoDB. Region: `ap-south-1` (or any Textract region).
 2. `.\deploy.ps1`
-3. Open the printed **Site** URL on your phone.
+3. Open the printed **Site** URL (https://...execute-api...) on your phone.
 
 If the website bucket policy fails with *AccessDenied*, your account has S3 "Block Public Access" turned on at the account level. Turn off "Block public access... bucket policies" under S3 → Block Public Access settings for this account, then re-run.
 
@@ -48,5 +48,5 @@ Tear down: `sam delete --stack-name moneywise` (empty both buckets first).
 ## Known limits
 
 - No login: anyone with the group code can view/add. Pick a code that's hard to guess.
-- S3 website hosting is HTTP only. Add CloudFront in front if you need HTTPS.
+- The site is served over HTTPS through API Gateway (it proxies non-API paths to the S3 website), because S3 website hosting is HTTP only and phones refuse plain HTTP. CloudFront is the usual choice but new AWS accounts cannot create it until AWS verifies them.
 - No editing bills. If Textract misreads one, delete it (×) and type the amount in.
