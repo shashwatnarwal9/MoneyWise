@@ -1,0 +1,5 @@
+.aws-sam/
+web/config.js
+__pycache__/
+.gstack/
+*accessKeys*.csv

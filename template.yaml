@@ -1,0 +1,141 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: MoneyWise - serverless bill splitting with Lambda + Textract
+
+Globals:
+  Function:
+    Runtime: python3.12
+    CodeUri: src/
+    Timeout: 30
+    MemorySize: 256
+    Environment:
+      Variables:
+        TABLE: !Ref Expenses
+        # Fixed name (not !Ref) so the S3 trigger doesn't create a circular dependency
+        BUCKET: !Sub "${AWS::StackName}-bills-${AWS::AccountId}"
+
+Resources:
+  # ---------- storage ----------
+  BillsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "${AWS::StackName}-bills-${AWS::AccountId}"
+      CorsConfiguration:
+        CorsRules:
+          - AllowedMethods: [PUT]
+            AllowedOrigins: ["*"]
+            AllowedHeaders: ["*"]
+      LifecycleConfiguration:
+        Rules:
+          - Id: expire-bill-photos
+            Status: Enabled
+            ExpirationInDays: 90
+
+  WebsiteBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      WebsiteConfiguration:
+        IndexDocument: index.html
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        IgnorePublicAcls: true
+        BlockPublicPolicy: false
+        RestrictPublicBuckets: false
+
+  WebsiteBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref WebsiteBucket
+      PolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal: "*"
+            Action: s3:GetObject
+            Resource: !Sub "${WebsiteBucket.Arn}/*"
+
+  Expenses:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - { AttributeName: groupId, AttributeType: S }
+        - { AttributeName: expenseId, AttributeType: S }
+      KeySchema:
+        - { AttributeName: groupId, KeyType: HASH }
+        - { AttributeName: expenseId, KeyType: RANGE }
+
+  # ---------- API ----------
+  Api:
+    Type: AWS::Serverless::HttpApi
+    Properties:
+      CorsConfiguration:
+        AllowOrigins: ["*"]
+        AllowMethods: [GET, POST, DELETE]
+        AllowHeaders: [content-type]
+      DefaultRouteSettings: # cheap guard against someone burning your Textract budget
+        ThrottlingBurstLimit: 20
+        ThrottlingRateLimit: 5
+
+  # ---------- functions ----------
+  CreateExpenseFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: app.create_expense
+      Policies:
+        - DynamoDBWritePolicy: { TableName: !Ref Expenses }
+        - S3WritePolicy: { BucketName: !Sub "${AWS::StackName}-bills-${AWS::AccountId}" }
+      Events:
+        Post:
+          Type: HttpApi
+          Properties: { ApiId: !Ref Api, Path: /expenses, Method: POST }
+
+  ProcessBillFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: app.process_bill
+      Policies:
+        - DynamoDBCrudPolicy: { TableName: !Ref Expenses }
+        - S3ReadPolicy: { BucketName: !Sub "${AWS::StackName}-bills-${AWS::AccountId}" }
+        - Statement:
+            - Effect: Allow
+              Action: [textract:AnalyzeExpense, rekognition:DetectText]
+              Resource: "*"
+      Events:
+        BillUploaded:
+          Type: S3
+          Properties:
+            Bucket: !Ref BillsBucket
+            Events: s3:ObjectCreated:*
+            Filter:
+              S3Key:
+                Rules: [{ Name: prefix, Value: bills/ }]
+
+  GetGroupFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: app.get_group
+      Policies:
+        - DynamoDBReadPolicy: { TableName: !Ref Expenses }
+      Events:
+        Get:
+          Type: HttpApi
+          Properties: { ApiId: !Ref Api, Path: "/groups/{group}", Method: GET }
+
+  DeleteExpenseFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: app.delete_expense
+      Policies:
+        - DynamoDBCrudPolicy: { TableName: !Ref Expenses }
+      Events:
+        Delete:
+          Type: HttpApi
+          Properties: { ApiId: !Ref Api, Path: "/groups/{group}/expenses/{id}", Method: DELETE }
+
+Outputs:
+  WebsiteUrl:
+    Value: !GetAtt WebsiteBucket.WebsiteURL
+  ApiUrl:
+    Value: !Sub "https://${Api}.execute-api.${AWS::Region}.amazonaws.com"
+  WebsiteBucketName:
+    Value: !Ref WebsiteBucket

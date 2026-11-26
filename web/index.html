@@ -1,0 +1,315 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MoneyWise · split bills with a photo</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🧾</text></svg>">
+<script src="config.js"></script>
+<style>
+  :root {
+    --bg: #f4f1ea; --card: #fffdf8; --ink: #1f1c17; --muted: #756e62; --line: #e6dfd2;
+    --accent: #0d6b4b; --accent-ink: #fff; --owe: #b4441b; --soft: #ebe5d8;
+    --mono: ui-monospace, "SF Mono", "Cascadia Mono", Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #15140f; --card: #1f1d17; --ink: #f1ece1; --muted: #a49c8c; --line: #343026;
+            --accent: #3fbf8c; --accent-ink: #0b1a14; --owe: #f08a5d; --soft: #2a271f; }
+  }
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  body { margin: 0; background: var(--bg); color: var(--ink);
+         font: 16px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  main { max-width: 34rem; margin: 0 auto; padding: 1rem 1rem 4rem; }
+  header { display: flex; align-items: center; justify-content: space-between; gap: .5rem; padding: .5rem 0 1.25rem; }
+  h1 { font-size: 1.35rem; margin: 0; letter-spacing: -.02em; }
+  h1 span { color: var(--accent); }
+  h2 { font-size: .78rem; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin: 0 0 .75rem; font-weight: 600; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 1.1rem; margin-bottom: 1rem; }
+  .amt { font-family: var(--mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .muted { color: var(--muted); font-size: .88rem; }
+  button, input, select { font: inherit; color: inherit; }
+  input, select { width: 100%; padding: .65rem .75rem; border: 1px solid var(--line); border-radius: 10px; background: var(--bg); }
+  input:focus-visible, select:focus-visible, button:focus-visible, label.btn:focus-within { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .btn { display: inline-flex; align-items: center; justify-content: center; gap: .5rem; border: 0; border-radius: 10px;
+         padding: .65rem 1rem; background: var(--soft); cursor: pointer; font-weight: 600; white-space: nowrap; }
+  .btn.primary { background: var(--accent); color: var(--accent-ink); }
+  .btn.big { width: 100%; padding: 1rem; font-size: 1.05rem; border-radius: 12px; }
+  .btn:disabled { opacity: .5; cursor: progress; }
+  .row { display: flex; gap: .5rem; align-items: center; }
+  .row > input { flex: 1; }
+  label.field { display: block; margin-bottom: .9rem; }
+  label.field > span { display: block; font-size: .85rem; font-weight: 600; margin-bottom: .3rem; }
+  .chips { display: flex; flex-wrap: wrap; gap: .4rem; margin-bottom: .75rem; }
+  .chip { border: 1px solid var(--line); background: var(--bg); border-radius: 999px; padding: .3rem .75rem; font-size: .9rem; cursor: pointer; }
+  .chip[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+  .chip .x { margin-left: .35rem; opacity: .6; }
+  #status { min-height: 1.4em; margin: .75rem 0 0; font-size: .92rem; }
+  #status.err { color: var(--owe); }
+  details summary { cursor: pointer; color: var(--muted); font-size: .9rem; margin-top: .9rem; }
+  details[open] summary { margin-bottom: .75rem; }
+  /* receipt card with torn edge */
+  .receipt { position: relative; border: 0; border-radius: 14px 14px 0 0; margin-bottom: 1.6rem;
+             filter: drop-shadow(0 1px 0 var(--line)) drop-shadow(0 0 1px var(--line)); }
+  .receipt::after { content: ""; position: absolute; left: 0; right: 0; bottom: -8px; height: 8px;
+    background: linear-gradient(135deg, var(--card) 4px, transparent 0) 0 0 / 8px 8px,
+                linear-gradient(-135deg, var(--card) 4px, transparent 0) 0 0 / 8px 8px; }
+  .debt { display: flex; align-items: center; gap: .75rem; padding: .6rem 0; border-bottom: 1px dashed var(--line); }
+  .debt:last-child { border-bottom: 0; }
+  .debt .who { flex: 1; min-width: 0; }
+  .debt .amt { font-weight: 700; color: var(--owe); }
+  .bal { display: flex; justify-content: space-between; font-size: .9rem; padding: .15rem 0; }
+  .pos { color: var(--accent); } .neg { color: var(--owe); }
+  .bill { display: flex; gap: .75rem; padding: .75rem 0; border-bottom: 1px solid var(--line); }
+  .bill:last-child { border-bottom: 0; }
+  .bill .info { flex: 1; min-width: 0; }
+  .bill .title { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .bill .del { border: 0; background: none; color: var(--muted); font-size: 1.2rem; line-height: 1; padding: 0 .25rem; cursor: pointer; align-self: flex-start; }
+  .bill .del:hover { color: var(--owe); }
+  .bill.failed .title, .bill.failed .err { color: var(--owe); }
+  .skeleton { display: inline-block; width: 4.5rem; height: 1em; border-radius: 4px; background: linear-gradient(90deg, var(--soft), var(--line), var(--soft)); background-size: 200% 100%; animation: shimmer 1.2s infinite; }
+  @keyframes shimmer { to { background-position: -200% 0; } }
+  @media (prefers-reduced-motion: reduce) { .skeleton { animation: none; } }
+  .hero { padding: 2rem 0 1rem; }
+  .hero p.lead { font-size: 1.6rem; line-height: 1.2; font-weight: 700; letter-spacing: -.02em; margin: 0 0 .5rem; }
+  .steps { padding-left: 1.2rem; color: var(--muted); font-size: .92rem; }
+  .empty { color: var(--muted); font-size: .92rem; margin: 0; }
+  .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Money<span>Wise</span></h1>
+    <button class="btn" id="share" hidden>Share group</button>
+  </header>
+
+  <!-- landing -->
+  <section id="join" hidden>
+    <div class="hero">
+      <p class="lead">Snap the bill.<br>We'll do the maths.</p>
+      <p class="muted">Upload a photo of any bill. Amazon Textract reads the total and MoneyWise splits it across your group.</p>
+    </div>
+    <form class="card" id="joinForm">
+      <label class="field"><span>Group code</span>
+        <input id="groupInput" placeholder="e.g. room-204" autocomplete="off" required pattern="[a-zA-Z0-9\-]{3,40}"
+               title="3-40 letters, numbers or dashes"></label>
+      <button class="btn primary big">Open group</button>
+      <ol class="steps">
+        <li>Make up a code. Anyone with it can join.</li>
+        <li>Share the link with your roommates.</li>
+        <li>Scan bills as you go. Settle up whenever.</li>
+      </ol>
+    </form>
+  </section>
+
+  <!-- group -->
+  <section id="app" hidden>
+    <div class="card">
+      <h2>People in <span id="groupName" style="text-transform:none;color:var(--ink)"></span></h2>
+      <div class="chips" id="people"></div>
+      <form class="row" id="addPerson">
+        <label class="sr" for="personInput">Add a person</label>
+        <input id="personInput" placeholder="Add a name" maxlength="30" autocomplete="off">
+        <button class="btn">Add</button>
+      </form>
+    </div>
+
+    <div class="card" id="addBill">
+      <h2>Add a bill</h2>
+      <label class="field"><span>Paid by</span><select id="payer"></select></label>
+      <div class="field"><span style="display:block;font-size:.85rem;font-weight:600;margin-bottom:.3rem">Split between</span>
+        <div class="chips" id="splitWith"></div></div>
+      <label class="btn primary big" id="scanBtn">📷 Scan a bill
+        <input type="file" id="photo" accept="image/*" capture="environment" class="sr"></label>
+      <details>
+        <summary>Or type it in</summary>
+        <form class="row" id="manual">
+          <label class="sr" for="amount">Amount</label>
+          <input id="amount" inputmode="decimal" placeholder="₹ amount" required style="max-width:8rem">
+          <label class="sr" for="note">What for</label>
+          <input id="note" placeholder="What for?" maxlength="60">
+          <button class="btn">Save</button>
+        </form>
+      </details>
+      <p id="status" role="status" aria-live="polite"></p>
+    </div>
+
+    <div class="card receipt">
+      <h2>Who owes whom</h2>
+      <div id="debts"></div>
+    </div>
+
+    <div class="card">
+      <h2>Bills</h2>
+      <div id="bills"></div>
+    </div>
+  </section>
+</main>
+
+<script>
+const API = window.API;
+const $ = s => document.querySelector(s);
+const money = c => (c / 100).toLocaleString('en-IN', { style: 'currency', currency: 'INR' });
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => `&#${c.charCodeAt(0)};`);
+const group = decodeURIComponent(location.hash.slice(1)).toLowerCase();
+const peopleKey = 'mw-people-' + group;
+
+let data = { expenses: [], balances: {}, settlements: [] };
+let localPeople = JSON.parse(localStorage.getItem(peopleKey) || '[]');
+let excluded = new Set();      // people unticked in "split between"
+let pendingId = null, timer = null;
+
+const everyone = () => [...new Set([...localPeople, ...Object.keys(data.balances)])];
+const isStale = e => Date.now() - parseInt(e.id) > 120000;  // id starts with ms timestamp
+
+function status(msg, err = false) { $('#status').textContent = msg; $('#status').className = err ? 'err' : ''; }
+
+async function api(path, body, method = body ? 'POST' : 'GET') {
+  const r = await fetch(API + path, body ? { method, headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) } : { method });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.error || `Server error (${r.status})`);
+  return j;
+}
+
+async function load() {
+  clearTimeout(timer);
+  try { data = await api('/groups/' + group); } catch (e) { return status(e.message, true); }
+  render();
+  const p = pendingId && data.expenses.find(e => e.id === pendingId);
+  if (p && p.status === 'done') { status(`✓ ${money(p.total)}${p.vendor ? ' at ' + p.vendor : ''}, split ${p.members.length} ways`); pendingId = null; }
+  if (p && p.status === 'failed') { status(p.error, true); pendingId = null; }
+  if (data.expenses.some(e => e.status === 'processing' && !isStale(e))) timer = setTimeout(load, 1500);
+}
+
+function render() {
+  const all = everyone();
+  // people chips (only names not yet in any bill can be removed)
+  $('#people').innerHTML = all.length ? all.map(n => data.balances[n] === undefined
+      ? `<button class="chip" data-remove="${esc(n)}">${esc(n)}<span class="x" aria-label="remove">×</span></button>`
+      : `<span class="chip" style="cursor:default">${esc(n)}</span>`).join('')
+    : '<p class="empty">Add everyone who shares bills.</p>';
+  // payer select, keep current choice
+  const sel = $('#payer'), keep = sel.value || localStorage.getItem('mw-me');
+  sel.innerHTML = all.map(n => `<option>${esc(n)}</option>`).join('');
+  if (all.includes(keep)) sel.value = keep;
+  $('#splitWith').innerHTML = all.map(n => `<button type="button" class="chip" data-toggle="${esc(n)}" aria-pressed="${!excluded.has(n)}">${esc(n)}</button>`).join('');
+  $('#addBill').style.opacity = all.length ? 1 : .5;
+
+  // who owes whom
+  const s = data.settlements;
+  $('#debts').innerHTML = s.length ? s.map((t, i) => `
+      <div class="debt"><div class="who"><b>${esc(t.from)}</b> <span class="muted">pays</span> <b>${esc(t.to)}</b></div>
+        <span class="amt">${money(t.amount)}</span>
+        <button class="btn" data-settle="${i}">Settle</button></div>`).join('')
+    : `<p class="empty">${data.expenses.length ? 'All square 🎉' : 'Nothing yet. Scan your first bill.'}</p>`;
+
+  // bills
+  $('#bills').innerHTML = data.expenses.length ? data.expenses.map(e => {
+    const stuck = e.status === 'processing' && isStale(e);
+    const title = e.status === 'processing' ? (stuck ? 'Upload didn’t finish' : 'Reading bill…') : e.status === 'failed' ? 'Couldn’t read bill' : (e.vendor || 'Bill');
+    const right = e.status === 'done' ? `<span class="amt">${money(e.total)}</span>` : e.status === 'processing' && !stuck ? '<span class="skeleton"></span>' : '<span class="amt muted">—</span>';
+    return `<div class="bill ${e.status === 'failed' || stuck ? 'failed' : ''}"><div class="info">
+        <div class="title">${esc(title)}</div>
+        <div class="muted">${e.date ? esc(e.date) + ' · ' : ''}paid by ${esc(e.payer)} · split with ${e.members.map(esc).join(', ')}</div>
+        ${e.status === 'failed' ? `<div class="muted err">${esc(e.error)}</div>` : ''}
+      </div>${right}<button class="del" data-del="${esc(e.id)}" aria-label="Delete ${esc(title)}" title="Delete">×</button></div>`;
+  }).join('') : '<p class="empty">No bills yet.</p>';
+}
+
+function savePeople() { localStorage.setItem(peopleKey, JSON.stringify(localPeople)); render(); }
+
+function splitFields() {
+  const members = everyone().filter(n => !excluded.has(n));
+  if (!members.length) throw new Error('Pick at least one person to split with');
+  localStorage.setItem('mw-me', $('#payer').value);
+  return { group, payer: $('#payer').value, members };
+}
+
+// Phone photos are 3-12 MB; shrink to ~2000px JPEG so upload is fast and under Textract's 10 MB limit.
+async function shrink(file) {
+  const img = await createImageBitmap(file);
+  const k = Math.min(1, 2000 / Math.max(img.width, img.height));
+  const c = Object.assign(document.createElement('canvas'), { width: Math.round(img.width * k), height: Math.round(img.height * k) });
+  c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+  return new Promise(r => c.toBlob(r, 'image/jpeg', 0.85));
+}
+
+async function scan(file) {
+  const btn = $('#scanBtn');
+  btn.style.pointerEvents = 'none'; btn.style.opacity = .6;
+  try {
+    const fields = splitFields();
+    status('Preparing photo…');
+    let blob;
+    try { blob = await shrink(file); } catch { throw new Error('Couldn’t open that image. Try a JPG or PNG photo.'); }
+    status('Uploading…');
+    const { id, uploadUrl } = await api('/expenses', fields);
+    pendingId = id;
+    const up = await fetch(uploadUrl, { method: 'PUT', headers: { 'content-type': 'image/jpeg' }, body: blob });
+    if (!up.ok) throw new Error('Upload failed. Check your connection and try again.');
+    status('Reading the bill with Amazon Textract…');
+    await load();
+  } catch (e) { status(e.message, true); }
+  finally { btn.style.pointerEvents = ''; btn.style.opacity = ''; $('#photo').value = ''; }
+}
+
+// ---------- wiring ----------
+if (!API) {
+  document.body.innerHTML = '<main><p class="card">config.js missing. Deploy with <code>deploy.ps1</code>, which writes it.</p></main>';
+} else if (!/^[a-z0-9-]{3,40}$/.test(group)) {
+  $('#join').hidden = false;
+  $('#joinForm').onsubmit = e => { e.preventDefault(); location.hash = $('#groupInput').value.trim().toLowerCase(); };
+} else {
+  $('#app').hidden = false; $('#share').hidden = false;
+  $('#groupName').textContent = group;
+  document.title = `${group} · MoneyWise`;
+  load();
+}
+window.onhashchange = () => location.reload();
+
+$('#share').onclick = async () => {
+  const url = location.href;
+  if (navigator.share) return navigator.share({ title: 'MoneyWise: ' + group, url }).catch(() => {});
+  if (navigator.clipboard) { await navigator.clipboard.writeText(url); return status('Link copied. Send it to your group.'); }
+  prompt('Copy this link and send it to your group:', url);   // S3 website is http, so no clipboard API
+};
+
+$('#addPerson').onsubmit = e => {
+  e.preventDefault();
+  const n = $('#personInput').value.trim().slice(0, 30);
+  if (n && !everyone().includes(n)) { localPeople.push(n); savePeople(); }
+  $('#personInput').value = '';
+};
+
+document.addEventListener('click', async e => {
+  const t = e.target.closest('[data-remove],[data-toggle],[data-settle],[data-del]');
+  if (!t) return;
+  if (t.dataset.del && confirm('Delete this bill? Balances will update.')) {
+    try { await api(`/groups/${group}/expenses/${t.dataset.del}`, null, 'DELETE'); await load(); }
+    catch (err) { status(err.message, true); }
+  }
+  if (t.dataset.remove !== undefined) { localPeople = localPeople.filter(n => n !== t.dataset.remove); savePeople(); }
+  if (t.dataset.toggle !== undefined) { const n = t.dataset.toggle; excluded.has(n) ? excluded.delete(n) : excluded.add(n); render(); }
+  if (t.dataset.settle !== undefined) {
+    const s = data.settlements[t.dataset.settle];
+    if (!confirm(`Mark that ${s.from} paid ${s.to} ${money(s.amount)}?`)) return;
+    t.disabled = true;
+    try { await api('/expenses', { group, payer: s.from, members: [s.to], amount: (s.amount / 100).toFixed(2), note: `Settle-up: ${s.from} → ${s.to}` }); await load(); }
+    catch (err) { status(err.message, true); t.disabled = false; }
+  }
+});
+
+$('#photo').onchange = e => e.target.files[0] && scan(e.target.files[0]);
+
+$('#manual').onsubmit = async e => {
+  e.preventDefault();
+  try {
+    await api('/expenses', { ...splitFields(), amount: $('#amount').value, note: $('#note').value });
+    $('#amount').value = $('#note').value = '';
+    status('✓ Saved'); await load();
+  } catch (err) { status(err.message, true); }
+};
+</script>
+</body>
+</html>
