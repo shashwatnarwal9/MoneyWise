@@ -64,6 +64,7 @@
   .chip .x { margin-left: .35rem; opacity: .6; }
   #status { min-height: 1.4em; margin: .75rem 0 0; font-size: .92rem; }
   #status.err { color: var(--owe); }
+  #status:empty { min-height: 0; margin: 0; }  /* no dead space; stays in a11y tree for aria-live */
   .manual { display: grid; grid-template-columns: 7rem 1fr auto; gap: .5rem; align-items: end; }
   .manual .field { margin: 0; }
   details summary { cursor: pointer; color: var(--muted); font-size: .9rem; margin-top: .9rem; }
