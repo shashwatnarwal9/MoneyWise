@@ -27,7 +27,15 @@
   h2 { font-size: .78rem; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin: 0 0 .75rem; font-weight: 600; }
   /* once a group has bills, setup (People) moves to the bottom; balances + scan lead */
   #app { display: flex; flex-direction: column; }
+  .col { display: contents; }
+  #peopleCard { order: -1; }
   #app.ready #peopleCard { order: 1; }
+  /* laptop / projector: actions left, answers right */
+  @media (min-width: 960px) {
+    main:has(#app:not([hidden])) { max-width: 60rem; }
+    #app { display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; align-items: start; }
+    .col { display: flex; flex-direction: column; }
+  }
   .card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 1.1rem; margin-bottom: 1rem; }
   .amt { font-family: var(--mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
   .muted { color: var(--muted); font-size: .88rem; }
@@ -109,6 +117,7 @@
 
   <!-- group -->
   <section id="app" hidden>
+   <div class="col">
     <div class="card" id="peopleCard">
       <h2>People in <span id="groupName" style="text-transform:none;color:var(--ink)"></span></h2>
       <div class="chips" id="people"></div>
@@ -138,7 +147,9 @@
       </details>
       <p id="status" role="status" aria-live="polite"></p>
     </div>
+   </div>
 
+   <div class="col">
     <div class="card receipt">
       <h2>Who owes whom</h2>
       <div id="debts"></div>
@@ -148,6 +159,7 @@
       <h2>Bills</h2>
       <div id="bills"></div>
     </div>
+   </div>
   </section>
 </main>
 
