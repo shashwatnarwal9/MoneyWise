@@ -117,6 +117,15 @@
   .thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
   .thumb.none { display: grid; place-items: center; color: var(--muted); font-weight: 700; cursor: default; }
   .hist a { color: inherit; }
+  dialog#itemsDlg { border: 0; border-radius: 14px; padding: 1.1rem; background: var(--card); color: var(--ink);
+                    width: min(94vw, 30rem); max-height: 90vh; overflow: auto; }
+  dialog#itemsDlg::backdrop { background: rgb(0 0 0 / .6); }
+  .itemRow { padding: .6rem 0; border-bottom: 1px dashed var(--line); }
+  .itemHead { display: flex; justify-content: space-between; gap: .75rem; font-weight: 600; margin-bottom: .5rem; }
+  .itemRow .chips { margin-bottom: .2rem; }
+  #itemsPreview { margin: .9rem 0 .4rem; }
+  #itemsPreview .bal { display: flex; justify-content: space-between; padding: .2rem 0; font-weight: 600; }
+  #itemsErr { color: var(--owe); min-height: 1.2em; margin: .2rem 0 .6rem; }
   dialog#viewer { border: 0; border-radius: 14px; padding: .75rem; background: var(--card); color: var(--ink); max-width: min(92vw, 40rem); }
   dialog#viewer::backdrop { background: rgb(0 0 0 / .6); }
   #viewerImg { display: block; max-width: 100%; max-height: 78vh; border-radius: 8px; margin: 0 auto .75rem; }
@@ -157,7 +166,8 @@
   <section id="join" hidden>
     <div class="hero">
       <p class="lead">Snap the bill.<br>We'll do the maths.</p>
-      <p class="muted">Upload a photo of any bill. Amazon Textract reads the total and MoneyWise splits it across your group.</p>
+      <p class="muted">Upload a photo of any bill. Amazon Rekognition reads the total and items, and MoneyWise splits it across your group.</p>
+      <p class="muted"><small>Note: Amazon Textract isn't used yet because it's waiting on AWS account verification. Bills are read with Amazon Rekognition instead.</small></p>
     </div>
     <div class="card" id="myGroups" hidden>
       <h2>Your groups</h2>
@@ -247,6 +257,16 @@
     </div>
   </section>
 
+  <dialog id="itemsDlg" aria-labelledby="itemsTitle">
+    <h2 id="itemsTitle">Split by item</h2>
+    <p class="muted hint">Tap who had each item. A shared item is split evenly between its people. Tax and charges are shared in the same ratio.</p>
+    <div id="itemsList"></div>
+    <div id="itemsPreview"></div>
+    <p class="muted err" id="itemsErr" role="alert"></p>
+    <div class="row"><button type="button" class="btn" data-close>Cancel</button>
+      <button type="button" class="btn primary" id="itemsSave" style="flex:1">Save split</button></div>
+  </dialog>
+
   <dialog id="viewer">
     <img id="viewerImg" alt="Bill photo">
     <form method="dialog"><button class="btn" style="width:100%">Close</button></form>
@@ -288,7 +308,7 @@ let pendingId = null, timer = null;
 const isStale = e => Date.now() - parseInt(e.id) > 120000;  // id starts with ms timestamp
 const sumShares = () => Object.values(shares).reduce((a, v) => a + (parseFloat(v) > 0 ? parseFloat(v) : 0), 0);
 const splitText = e => e.shares
-  ? 'split unequally: ' + Object.entries(e.shares).map(([n, c]) => `${esc(n)} ${money(c)}`).join(', ')
+  ? (e.assign ? 'split by item: ' : 'split unequally: ') +Object.entries(e.shares).map(([n, c]) => `${esc(n)} ${money(c)}`).join(', ')
   : 'split with ' + e.members.map(esc).join(', ');
 
 function status(msg, err = false) { $('#status').textContent = msg; $('#status').className = err ? 'err' : ''; }
@@ -320,7 +340,11 @@ async function load() {
   try { data = await api('/groups/' + group); } catch (e) { return status(e.message, true); }
   render();
   const p = pendingId && data.expenses.find(e => e.id === pendingId);
-  if (p && p.status === 'done') { status(`✓ ${money(p.total)}${p.vendor ? ' at ' + p.vendor : ''}, split ${p.shares ? 'unequally' : p.members.length + ' ways'}`); pendingId = null; }
+  if (p && p.status === 'done') {
+    status(`✓ ${money(p.total)}${p.vendor ? ' at ' + p.vendor : ''}, split ${p.shares ? 'unequally' : p.members.length + ' ways'}.`);
+    if (p.items.length) $('#status').insertAdjacentHTML('beforeend', ` ${p.items.length} items found: <button class="link" data-items="${esc(p.id)}">split by item</button>`);
+    pendingId = null;
+  }
   if (p && p.status === 'failed') { status(p.error, true); pendingId = null; }
   if (data.expenses.some(e => e.status === 'processing' && !isStale(e))) timer = setTimeout(load, 1500);
 }
@@ -369,7 +393,8 @@ function render() {
     const right = e.status === 'done' ? `<span class="amt">${money(e.total)}</span>` : e.status === 'processing' && !stuck ? '<span class="skeleton"></span>' : '<span class="amt muted">—</span>';
     return `<div class="bill ${e.status === 'failed' || stuck ? 'failed' : ''}"><div class="info">
         <div class="title">${esc(title)}</div>
-        <div class="muted">${e.date ? esc(e.date) + ' · ' : ''}paid by ${esc(e.payer)} · ${splitText(e)}${e.photo ? ` · <button class="link" data-photo="${esc(e.photo)}">photo</button>` : ''}</div>
+        <div class="muted">${e.date ? esc(e.date) + ' · ' : ''}paid by ${esc(e.payer)} · ${splitText(e)}${e.photo ? ` · <button class="link" data-photo="${esc(e.photo)}">photo</button>` : ''}${
+          e.status === 'done' && e.items.length ? ` · <button class="link" data-items="${esc(e.id)}">${e.assign ? 'edit item split' : `split by item (${e.items.length})`}</button>` : ''}</div>
         ${e.status === 'failed' ? `<div class="muted err">${esc(e.error)}</div>` : ''}
       </div>${right}<button class="del" data-del="${esc(e.id)}" aria-label="Delete ${esc(title)}" title="Delete">×</button></div>`;
   }).join('') : '<p class="empty">No bills yet.</p>';
@@ -510,9 +535,17 @@ document.addEventListener('input', e => {
 });
 
 document.addEventListener('click', async e => {
-  const t = e.target.closest('[data-remove],[data-toggle],[data-settle],[data-del],[data-mode],[data-photo],[data-leave],[data-hdel],[data-gdel]');
+  const t = e.target.closest('[data-remove],[data-toggle],[data-settle],[data-del],[data-mode],[data-photo],[data-leave],[data-hdel],[data-gdel],[data-items],[data-iassign],[data-close]');
   if (!t) return;
   const d = t.dataset;
+  if (d.items) openItems(d.items);
+  if (d.iassign !== undefined) {
+    const s = itemsAssign[d.iassign];
+    s.has(d.name) ? s.delete(d.name) : s.add(d.name);
+    t.setAttribute('aria-pressed', s.has(d.name));
+    itemsPreview();
+  }
+  if (d.close !== undefined) t.closest('dialog').close();
   if (d.hdel && confirm('Delete this bill and its photo? Balances in its group will update.')) {
     try { await api(`/groups/${d.hdel.replace('/', '/expenses/')}`, null, 'DELETE'); await showHistory(); }
     catch (err) { alert(err.message); }
@@ -556,6 +589,48 @@ async function deleteGroup(g) {
 $('#deleteGroup').onclick = () => deleteGroup(group);
 
 $('#viewer').onclick = e => { if (e.target === $('#viewer')) $('#viewer').close(); };  // tap outside to close
+$('#itemsDlg').onclick = e => { if (e.target === $('#itemsDlg')) $('#itemsDlg').close(); };
+
+// ---------- split by item ----------
+let itemsBill = null, itemsAssign = [];  // assign[i] = Set of names who had item i
+
+function openItems(id) {
+  itemsBill = data.expenses.find(x => x.id === id);
+  if (!itemsBill) return;
+  // start from the saved split, else everyone on the bill shares every item
+  itemsAssign = itemsBill.items.map((_, i) => new Set(itemsBill.assign?.[i] || itemsBill.members));
+  $('#itemsTitle').textContent = `Split by item · ${itemsBill.vendor || 'Bill'}`;
+  $('#itemsList').innerHTML = itemsBill.items.map((it, i) => `<div class="itemRow">
+      <div class="itemHead"><span>${esc(it.name)}</span><span class="amt">${money(it.price)}</span></div>
+      <div class="chips">${data.members.map(n => `<button type="button" class="chip" data-iassign="${i}" data-name="${esc(n)}" aria-pressed="${itemsAssign[i].has(n)}">${esc(n)}</button>`).join('')}</div>
+    </div>`).join('');
+  $('#itemsErr').textContent = '';
+  itemsPreview();
+  $('#itemsDlg').showModal();
+}
+
+// Same maths as the server: item subtotals are weights, the bill total (tax included) is shared in that ratio.
+function itemsPreview() {
+  const e = itemsBill, w = {};
+  e.items.forEach((it, i) => { const ns = [...itemsAssign[i]]; ns.forEach(n => { w[n] = (w[n] || 0) + it.price / ns.length; }); });
+  const W = Object.values(w).reduce((a, b) => a + b, 0);
+  const itemsSum = e.items.reduce((a, it) => a + it.price, 0), extra = e.total - itemsSum;
+  $('#itemsPreview').innerHTML = `<p class="muted">Items ${money(itemsSum)} + ${extra >= 0 ? 'tax & charges' : 'discount'} ${money(Math.abs(extra))} = ${money(e.total)}</p>` +
+    Object.entries(w).map(([n, x]) => `<div class="bal"><span>${esc(n)}</span><span class="amt">${money(Math.round(e.total * x / W))}</span></div>`).join('');
+}
+
+$('#itemsSave').onclick = async () => {
+  const missing = itemsBill.items.filter((_, i) => !itemsAssign[i].size).map(it => it.name);
+  if (missing.length) return $('#itemsErr').textContent = `Pick who had: ${missing.join(', ')}`;
+  $('#itemsSave').disabled = true;
+  try {
+    await api(`/groups/${group}/expenses/${itemsBill.id}/items`, { assign: itemsAssign.map(s => [...s]) });
+    $('#itemsDlg').close();
+    status('✓ Split by item. Tax shared in the same ratio.');
+    await load();
+  } catch (err) { $('#itemsErr').textContent = err.message; }
+  finally { $('#itemsSave').disabled = false; }
+};
 
 document.querySelectorAll('[data-bill]').forEach(i => { i.onchange = () => i.files[0] && scan(i.files[0], i); });
 

@@ -22,6 +22,7 @@ table = boto3.resource("dynamodb", region_name=REGION).Table(os.environ.get("TAB
 
 GROUP_RE = re.compile(r"^[a-z0-9-]{3,40}$")
 META = "#meta"  # per-group item holding the member list; '#' sorts before bill ids
+ID_RE = re.compile(r"^\d{13}-[0-9a-f]{8}$")  # bill id: ms timestamp + random
 
 
 def parse_body(event):
@@ -68,14 +69,53 @@ def read_expense(doc):
         if vals:
             total = max(vals)
             break
+    items = []
+    for d in doc.get("ExpenseDocuments", []):
+        for g in d.get("LineItemGroups", []):
+            for li in g.get("LineItems", []):
+                f = {x["Type"]["Text"]: x.get("ValueDetection", {}).get("Text", "") for x in li.get("LineItemExpenseFields", [])}
+                price = to_cents(f.get("PRICE", ""))
+                if f.get("ITEM") and price:
+                    items.append({"name": f["ITEM"].strip()[:40], "price": price})
     first = lambda t: found.get(t, [""])[0][:60]
-    return {"vendor": first("VENDOR_NAME") or first("NAME"), "date": first("INVOICE_RECEIPT_DATE"), "total": total}
+    return {"vendor": first("VENDOR_NAME") or first("NAME"), "date": first("INVOICE_RECEIPT_DATE"), "total": total,
+            "items": items[:MAX_ITEMS]}
 
 
 TOTAL_RE = re.compile(r"\b(grand\s*total|net\s*amount|amount\s*payable|net\s*payable|to\s*pay|total)\b", re.I)
 NUM_RE = re.compile(r"\d[\d,]*(?:\.\d+)?")
 MONEY_RE = re.compile(r"\d[\d,]*\.\d{2}\b")
 DATE_RE = re.compile(r"\b\d{1,2}[/.-]\d{1,2}[/.-]\d{2,4}\b")
+NOT_ITEM_RE = re.compile(r"\b(c?gst|s?gst|tax|vat|cess|service|discount|round(ed)?|change|cash|card|upi|paid|amount|bill|"
+                         r"date|time|tel|phone|mob|gstin|fssai|invoice|table|thank|qty|rate|price|items?|rs|inr)\b", re.I)
+MAX_ITEMS = 50
+
+
+def rows_of(lines):
+    """Group (text, box) lines sorted by Top into rows: lines whose vertical centres line up."""
+    rows = []
+    for text, b in lines:
+        mid = b["Top"] + b["Height"] / 2
+        if rows and abs(rows[-1][0] - mid) < b["Height"] * 0.6:
+            rows[-1][1].append((b["Left"], text))
+        else:
+            rows.append([mid, [(b["Left"], text)]])
+    return [[t for _, t in sorted(cells)] for _, cells in rows]
+
+
+def items_from_rows(rows):
+    """Bill rows above the (sub)total: a name cell + an x.xx amount -> {name, price}. Last amount = line total."""
+    items = []
+    for cells in rows:
+        row = " ".join(cells)
+        if TOTAL_RE.search(row):
+            break  # items end where totals begin
+        money = MONEY_RE.findall(row)
+        # name = first cell with words, cut before its first number ("Paneer Paratha 1 x 70.00" -> "Paneer Paratha")
+        name = next((re.split(r"\s\d", c)[0].strip(" :-") for c in cells if re.search(r"[A-Za-z]{2}", c)), "")
+        if money and len(name) >= 2 and not NOT_ITEM_RE.search(name):
+            items.append({"name": name.strip()[:40], "price": to_cents(money[-1])})
+    return items[:MAX_ITEMS]
 
 
 def read_lines(detections):
@@ -91,7 +131,19 @@ def read_lines(detections):
     if not totals:  # ponytail: no labelled total -> biggest x.xx amount on the bill; usually the total
         totals = [to_cents(m) for t, _ in lines for m in MONEY_RE.findall(t)]
     date = next((m.group() for t, _ in lines if (m := DATE_RE.search(t))), "")
-    return {"vendor": lines[0][0][:60] if lines else "", "date": date, "total": max(totals, default=None)}
+    # ponytail: Rekognition reads max 100 words, so long bills can lose rows; items are a best effort
+    return {"vendor": lines[0][0][:60] if lines else "", "date": date, "total": max(totals, default=None),
+            "items": items_from_rows(rows_of(lines))}
+
+
+def split_by_items(items, assign):
+    """Each person's subtotal of the items they had (a shared item is split evenly among its people).
+    Used as weights, so the bill total - tax, service charge, discounts - is shared in the same ratio."""
+    w = {}
+    for item, names in zip(items, assign):
+        for n in names:
+            w[n] = w.get(n, Decimal(0)) + (Decimal(int(item["price"])) / len(names)).quantize(Decimal("0.0001"))
+    return list(w), list(w.values())
 
 
 def split(total, members, weights=None):
@@ -252,11 +304,45 @@ def process_bill(event, _ctx):
 def delete_expense(event, _ctx):
     """DELETE /groups/{group}/expenses/{id}: undo a misread bill or a wrong entry."""
     group, eid = event["pathParameters"]["group"].lower(), event["pathParameters"]["id"]
-    if not GROUP_RE.match(group) or not re.match(r"^\d{13}-[0-9a-f]{8}$", eid):
+    if not GROUP_RE.match(group) or not ID_RE.match(eid):
         return resp(400, {"error": "Bad request"})
     table.delete_item(Key={"groupId": group, "expenseId": eid})
     s3.delete_object(Bucket=os.environ["BUCKET"], Key=f"bills/{group}/{eid}")  # no-op if it was a manual entry
     return resp(200, {"deleted": eid})
+
+
+def clean_assign(assign, n_items):
+    """Validate [[names for item 1], [names for item 2], ...]: one non-empty list per item."""
+    if not isinstance(assign, list) or len(assign) != n_items:
+        raise ValueError("Pick people for every item")
+    out = []
+    for names in assign:
+        if not isinstance(names, list):
+            raise ValueError("Pick people for every item")
+        names = list(dict.fromkeys(str(x).strip()[:30] for x in names if str(x).strip()))
+        if not names:
+            raise ValueError("Every item needs at least one person")
+        out.append(names)
+    if len({p for names in out for p in names}) > 20:
+        raise ValueError("Split between 1 and 20 people")
+    return out
+
+
+def assign_items(event, _ctx):
+    """POST /groups/{group}/expenses/{id}/items {"assign": [[names], ...]}: split a scanned bill item by item."""
+    group, eid = event["pathParameters"]["group"].lower(), event["pathParameters"]["id"]
+    if not GROUP_RE.match(group) or not ID_RE.match(eid):
+        return resp(400, {"error": "Bad request"})
+    bill = table.get_item(Key={"groupId": group, "expenseId": eid}).get("Item")
+    if not bill or bill.get("status") != "done" or not bill.get("items"):
+        return resp(400, {"error": "This bill has no items to split"})
+    try:
+        assign = clean_assign(parse_body(event).get("assign"), len(bill["items"]))
+    except ValueError as e:
+        return resp(400, {"error": str(e)})
+    members, weights = split_by_items(bill["items"], assign)
+    _update(group, eid, members=members, weights=weights, assign=assign)
+    return resp(200, {"ok": True})
 
 
 def delete_group(event, _ctx):
@@ -313,7 +399,8 @@ def get_group(event, _ctx):
         e = {"id": i["expenseId"], "payer": i["payer"], "members": i["members"], "status": i["status"],
              "total": int(i["total"]) if "total" in i else None, "vendor": i.get("vendor", ""),
              "date": i.get("date", ""), "note": i.get("note", ""), "error": i.get("error", ""),
-             "weights": i.get("weights"), "photo": None, "shares": None}
+             "weights": i.get("weights"), "photo": None, "shares": None, "assign": i.get("assign"),
+             "items": [{"name": it["name"], "price": int(it["price"])} for it in i.get("items", [])]}
         if i.get("photo"):
             e["photo"] = s3.generate_presigned_url("get_object", ExpiresIn=3600, Params={
                 "Bucket": os.environ["BUCKET"], "Key": f"bills/{group}/{i['expenseId']}"})

@@ -2,6 +2,16 @@ AWSTemplateFormatVersion: "2010-09-09"
 Transform: AWS::Serverless-2016-10-31
 Description: MoneyWise - serverless bill splitting with Lambda + Textract
 
+Parameters:
+  EnableCdn:
+    Type: String
+    AllowedValues: ["true", "false"]
+    Default: "false"
+    Description: Put CloudFront in front of the site (needs an AWS-verified account)
+
+Conditions:
+  UseCdn: !Equals [!Ref EnableCdn, "true"]
+
 Globals:
   Function:
     Runtime: python3.12
@@ -52,6 +62,27 @@ Resources:
             Principal: "*"
             Action: s3:GetObject
             Resource: !Sub "${WebsiteBucket.Arn}/*"
+
+  # CloudFront: HTTPS + edge caching in front of the S3 website. New AWS accounts can't create
+  # distributions until AWS verifies them, hence the switch; the API Gateway https URL works either way.
+  CDN:
+    Type: AWS::CloudFront::Distribution
+    Condition: UseCdn
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        HttpVersion: http2and3
+        PriceClass: PriceClass_200 # includes India edge locations
+        DefaultRootObject: index.html
+        Origins:
+          - Id: site
+            DomainName: !Select [2, !Split ["/", !GetAtt WebsiteBucket.WebsiteURL]]
+            CustomOriginConfig: { OriginProtocolPolicy: http-only }
+        DefaultCacheBehavior:
+          TargetOriginId: site
+          ViewerProtocolPolicy: redirect-to-https
+          CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad # Managed-CachingDisabled: redeploys show up instantly
+          Compress: true
 
   Expenses:
     Type: AWS::DynamoDB::Table
@@ -175,6 +206,17 @@ Resources:
           Type: HttpApi
           Properties: { ApiId: !Ref Api, Path: "/groups/{group}", Method: DELETE }
 
+  AssignItemsFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: app.assign_items
+      Policies:
+        - DynamoDBCrudPolicy: { TableName: !Ref Expenses }
+      Events:
+        Post:
+          Type: HttpApi
+          Properties: { ApiId: !Ref Api, Path: "/groups/{group}/expenses/{id}/items", Method: POST }
+
   MembersFunction:
     Type: AWS::Serverless::Function
     Properties:
@@ -188,7 +230,7 @@ Resources:
 
 Outputs:
   AppUrl:
-    Value: !Sub "https://${Api}.execute-api.${AWS::Region}.amazonaws.com/"
+    Value: !If [UseCdn, !Sub "https://${CDN.DomainName}/", !Sub "https://${Api}.execute-api.${AWS::Region}.amazonaws.com/"]
   WebsiteUrl:
     Value: !GetAtt WebsiteBucket.WebsiteURL
   ApiUrl:

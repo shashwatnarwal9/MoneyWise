@@ -1,9 +1,14 @@
-# Deploys the whole stack, then uploads the website. Usage: .\deploy.ps1
+# Deploys the whole stack, then uploads the website.
+#   .\deploy.ps1        site served over HTTPS by API Gateway
+#   .\deploy.ps1 -Cdn   also put CloudFront in front (needs an AWS-verified account).
+#                       Keep passing -Cdn on later deploys, or the distribution is removed.
 # Needs: AWS CLI + SAM CLI, credentials via `aws configure`. No `sam build` needed: no dependencies beyond boto3.
+param([switch]$Cdn)
 $stack = "moneywise"
 
 sam deploy --stack-name $stack --resolve-s3 --capabilities CAPABILITY_IAM `
-  --no-confirm-changeset --no-fail-on-empty-changeset
+  --no-confirm-changeset --no-fail-on-empty-changeset `
+  --parameter-overrides "EnableCdn=$($Cdn.IsPresent.ToString().ToLower())"
 if ($LASTEXITCODE) { exit 1 }
 
 $o = @{}
