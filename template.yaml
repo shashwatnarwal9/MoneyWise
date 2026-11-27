@@ -2,16 +2,6 @@ AWSTemplateFormatVersion: "2010-09-09"
 Transform: AWS::Serverless-2016-10-31
 Description: MoneyWise - serverless bill splitting with Lambda + Textract
 
-Parameters:
-  EnableCdn:
-    Type: String
-    AllowedValues: ["true", "false"]
-    Default: "false"
-    Description: Put CloudFront in front of the site (needs an AWS-verified account)
-
-Conditions:
-  UseCdn: !Equals [!Ref EnableCdn, "true"]
-
 Globals:
   Function:
     Runtime: python3.12
@@ -63,27 +53,6 @@ Resources:
             Action: s3:GetObject
             Resource: !Sub "${WebsiteBucket.Arn}/*"
 
-  # CloudFront: HTTPS + edge caching in front of the S3 website. New AWS accounts can't create
-  # distributions until AWS verifies them, hence the switch; the API Gateway https URL works either way.
-  CDN:
-    Type: AWS::CloudFront::Distribution
-    Condition: UseCdn
-    Properties:
-      DistributionConfig:
-        Enabled: true
-        HttpVersion: http2and3
-        PriceClass: PriceClass_200 # includes India edge locations
-        DefaultRootObject: index.html
-        Origins:
-          - Id: site
-            DomainName: !Select [2, !Split ["/", !GetAtt WebsiteBucket.WebsiteURL]]
-            CustomOriginConfig: { OriginProtocolPolicy: http-only }
-        DefaultCacheBehavior:
-          TargetOriginId: site
-          ViewerProtocolPolicy: redirect-to-https
-          CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad # Managed-CachingDisabled: redeploys show up instantly
-          Compress: true
-
   Expenses:
     Type: AWS::DynamoDB::Table
     Properties:
@@ -100,7 +69,7 @@ Resources:
   # GET / and GET /{proxy+} proxy to the S3 website; specific routes (/expenses, /groups/...) still win.
   # These MUST live in DefinitionBody: SAM re-imports this definition on every route change, which wipes
   # any route defined as a separate AWS::ApiGatewayV2::Route resource.
-  # ponytail: CloudFront is the usual answer, but new accounts can't create it until AWS verifies them; switch once verified.
+  # CloudFront (made in the console, see README) sits in front of the S3 website; this API route is the backup https link.
   Api:
     Type: AWS::Serverless::HttpApi
     Properties:
@@ -230,7 +199,7 @@ Resources:
 
 Outputs:
   AppUrl:
-    Value: !If [UseCdn, !Sub "https://${CDN.DomainName}/", !Sub "https://${Api}.execute-api.${AWS::Region}.amazonaws.com/"]
+    Value: !Sub "https://${Api}.execute-api.${AWS::Region}.amazonaws.com/"
   WebsiteUrl:
     Value: !GetAtt WebsiteBucket.WebsiteURL
   ApiUrl:

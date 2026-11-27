@@ -83,7 +83,7 @@ Step by step, when you scan a bill:
 1. **Create:** the page asks the API for a new bill. `create_expense` saves it in DynamoDB as *processing* and returns a one-time upload link (a *presigned URL*, valid 5 minutes).
 2. **Upload:** the phone shrinks the photo to about 2000 px and uploads it straight to S3. It never passes through a server.
 3. **Event:** S3 fires an *ObjectCreated* event, which starts `process_bill`. This is the **event-driven** part: nothing polls S3.
-4. **Read:** `process_bill` sends the photo to **Textract** (`AnalyzeExpense`), which returns the shop, date, total and line items, and saves them on the bill.
+4. **Read:** `process_bill` sends the photo to **Textract** (`AnalyzeExpense`), which returns the shop, date, total and line items, and saves them on the bill. *Right now Textract is waiting on AWS account verification, so the same function automatically uses **Rekognition** (`DetectText`) and rebuilds the bill's rows itself. It switches back to Textract on its own once the account is verified.*
 5. **Show:** the page refreshes every 1.5 s while a bill is processing. `get_group` returns the bills, balances and who-pays-whom.
 
 ## AWS services used
@@ -93,8 +93,8 @@ Step by step, when you scan a bill:
 | **AWS Lambda** (Python 3.12) | 7 small functions, all in [`src/app.py`](src/app.py) | Serverless computing, FaaS |
 | **Amazon API Gateway** (HTTP API) | HTTPS entry point for the API **and** the website | Managed APIs |
 | **Amazon S3** | Website hosting + bill photo storage (photos auto-delete after 1 year) | Cloud object storage |
-| **Amazon Textract** | Reads total, shop, date and line items from bill photos | AI / ML as a service |
-| **Amazon Rekognition** | Fallback text reader while Textract is unavailable on the account | AI / ML as a service |
+| **Amazon Textract** | Reads total, shop, date and line items from bill photos (built in; active once AWS verifies the account) | AI / ML as a service |
+| **Amazon Rekognition** | Reads the bills today, while Textract is unavailable on the account | AI / ML as a service |
 | **Amazon DynamoDB** | All bills and group members in one table, pay-per-request | NoSQL database |
 | **Amazon CloudWatch** | Logs from every function, including what was read from each bill | Monitoring |
 | **AWS SAM / CloudFormation** | The whole setup is defined in one file: [`template.yaml`](template.yaml) | Infrastructure as Code |
@@ -177,6 +177,13 @@ MoneyWise/
    powershell -ExecutionPolicy Bypass -File .\deploy.ps1
    ```
 4. **Open the printed `Site:` link on your phone.** Make up a group code (e.g. `room-204`), add names, scan a bill.
+5. **Add CloudFront (one time, in the console).** CloudFront → *Create distribution*:
+   - *Single website configuration*, name `moneywise`
+   - Origin type **Other**, origin domain = the `WebsiteUrl` output without `http://` (e.g. `moneywise-websitebucket-xxxx.s3-website.ap-south-1.amazonaws.com`)
+   - *Customize origin settings* → Protocol **HTTP only** (the S3 website endpoint has no HTTPS); recommended cache settings
+   - Security: *Do not enable security protections* (WAF costs extra) → *Create distribution*
+
+   After 5–15 minutes the `xxxx.cloudfront.net` link works. From then on `deploy.ps1` finds it and prints it as the `Site:` link.
 
 <details>
 <summary><b>Troubleshooting</b></summary>
@@ -186,11 +193,11 @@ MoneyWise/
 | `AccessDenied` on the website bucket policy | S3 → *Block Public Access settings for this account* → untick the two "bucket policies" boxes, then deploy again. |
 | `explicit deny in a service control policy` | The account belongs to an organization (e.g. a college account) that blocks these services. Use a personal AWS account. |
 | Bills read by Rekognition instead of Textract | New accounts often can't use Textract until AWS verifies them. Nothing to change: Textract is used automatically once it works. |
-| `Your account must be verified before you can add new CloudFront resources` | Open an AWS Support case (*Account and billing*) asking to verify the account, then run `.\deploy.ps1 -Cdn`. The app works without it. |
+| `Your account must be verified before you can add new CloudFront resources` | Seen when CloudFormation creates the distribution on a new account. Creating it in the console (step 5) worked for us; otherwise open an AWS Support case (*Account and billing → Other Account Issues*). The API Gateway link works meanwhile. |
 
 </details>
 
-**Tear down:** `sam delete --stack-name moneywise` (empty both S3 buckets first).
+**Tear down:** in CloudFront, *Disable* then *Delete* the distribution; empty both S3 buckets; then `sam delete --stack-name moneywise`.
 
 ## API reference
 
@@ -229,6 +236,7 @@ Within the AWS Free Tier, a hostel group's usage costs close to nothing:
 |---|---|---|
 | Lambda, API Gateway, DynamoDB, S3 | a few thousand requests | free tier |
 | Textract / Rekognition | about 1 page per bill | ~₹1 per bill after the free tier |
+| CloudFront | a few hundred page loads | free (1 TB/month free) |
 
 Tip: set a **Zero spend budget** (AWS Console → Budgets) to get an email if anything ever costs money.
 
